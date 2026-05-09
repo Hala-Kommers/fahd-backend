@@ -53,6 +53,7 @@ func NewRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
 		c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
 	})
 	admin.GET("/products", handler.AdminListProducts)
+	admin.GET("/products/:id", handler.AdminGetProduct)
 	admin.POST("/products", handler.AdminCreateProduct)
 	admin.PATCH("/products/:id", handler.AdminUpdateProduct)
 	admin.DELETE("/products/:id", handler.AdminDeleteProduct)

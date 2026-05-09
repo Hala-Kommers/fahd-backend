@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,19 +11,177 @@ import (
 )
 
 func (h *Handler) AdminListProducts(c *gin.Context) {
-	var rows []map[string]any
+	type adminProductListItem struct {
+		ID            int64    `json:"id"`
+		Title         string   `json:"title"`
+		IsActive      bool     `json:"isActive"`
+		CategoryName  *string  `json:"categoryName"`
+		SKU           string   `json:"sku"`
+		Price         float64  `json:"price"`
+		StockTotal    int      `json:"stockTotal"`
+		PrimaryImage  *string  `json:"primaryImage"`
+	}
+
+	var rows []adminProductListItem
 	q := h.db.Table("products p").
-		Select("p.*, c.name as category_name").
+		Select("p.id, p.title, (p.status = 'active') as is_active, c.name as category_name, p.sku, p.price, p.stock_total, img.url as primary_image").
 		Joins("LEFT JOIN categories c ON c.id = p.category_id").
+		Joins("LEFT JOIN LATERAL (SELECT url FROM product_images i WHERE i.product_id = p.id ORDER BY i.is_primary DESC, i.sort_order ASC, i.id ASC LIMIT 1) img ON TRUE").
 		Order("p.updated_at DESC")
+
+	page := 1
+	limit := 20
+	if v := c.Query("page"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	if v := c.Query("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			if parsed < 1 {
+				parsed = 1
+			}
+			if parsed > 100 {
+				parsed = 100
+			}
+			limit = parsed
+		}
+	}
+
 	if status := strings.TrimSpace(c.Query("status")); status != "" {
 		q = q.Where("p.status = ?", status)
 	}
-	if err := q.Find(&rows).Error; err != nil {
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to count admin products"})
+		return
+	}
+
+	offset := (page - 1) * limit
+	if err := q.Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load admin products"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": rows})
+
+	totalPages := int((total + int64(limit) - 1) / int64(limit))
+	c.JSON(http.StatusOK, gin.H{"data": rows, "meta": gin.H{"page": page, "limit": limit, "total": total, "totalPages": totalPages}})
+}
+
+func (h *Handler) AdminGetProduct(c *gin.Context) {
+	id := c.Param("id")
+
+	var product Product
+	if err := h.db.Where("id = ?", id).First(&product).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load product"})
+		return
+	}
+
+	var category struct {
+		ID   int64   `json:"id"`
+		Name *string `json:"name"`
+	}
+	if product.CategoryID != nil {
+		_ = h.db.Table("categories").Select("id, name").Where("id = ?", *product.CategoryID).Take(&category).Error
+	}
+
+	var images []ProductImage
+	if err := h.db.Where("product_id = ?", product.ID).Order("is_primary DESC, sort_order ASC, id ASC").Find(&images).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load product images"})
+		return
+	}
+
+	var variants []ProductVariant
+	if err := h.db.Where("product_id = ?", product.ID).Order("created_at ASC").Find(&variants).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load product variants"})
+		return
+	}
+
+	var pricingTiers []PricingTier
+	if err := h.db.Where("product_id = ?", product.ID).Order("qty ASC").Find(&pricingTiers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load pricing tiers"})
+		return
+	}
+
+	variantPayload := make([]gin.H, 0, len(variants))
+	for _, variant := range variants {
+		item := gin.H{
+			"id":            variant.ID,
+			"productId":     variant.ProductID,
+			"sku":           variant.SKU,
+			"priceOverride": variant.PriceOverride,
+			"stock":         variant.Stock,
+			"image":         variant.Image,
+			"isActive":      variant.IsActive,
+			"createdAt":     variant.CreatedAt,
+			"updatedAt":     variant.UpdatedAt,
+		}
+		if len(variant.Attributes) > 0 {
+			var attrs any
+			if err := json.Unmarshal(variant.Attributes, &attrs); err == nil {
+				item["attributes"] = attrs
+			}
+		}
+		variantPayload = append(variantPayload, item)
+	}
+
+	resp := gin.H{
+		"id":               product.ID,
+		"title":            product.Title,
+		"slug":             product.Slug,
+		"sku":              product.SKU,
+		"status":           product.Status,
+		"isActive":         product.Status == "active",
+		"category":         gin.H{"id": product.CategoryID, "name": category.Name},
+		"descriptionShort": product.DescriptionShort,
+		"descriptionLong":  product.DescriptionLong,
+		"pricing": gin.H{
+			"cost":      product.Cost,
+			"price":     product.Price,
+			"compareAt": product.CompareAt,
+			"currency":  product.Currency,
+		},
+		"pricingTiers": pricingTiers,
+		"images":       images,
+		"inventory": gin.H{
+			"mode":              product.InventoryMode,
+			"stockTotal":        product.StockTotal,
+			"lowStockThreshold": product.LowStockThreshold,
+		},
+		"hasVariants":       product.HasVariants,
+		"variants":          variantPayload,
+		"usageInstructions": product.UsageInstructions,
+		"salesCount":        product.SalesCount,
+		"rating":            product.Rating,
+		"isFeatured":        product.IsFeatured,
+		"createdAt":         product.CreatedAt,
+		"updatedAt":         product.UpdatedAt,
+	}
+
+	if len(product.VariantOptions) > 0 {
+		var v any
+		if err := json.Unmarshal(product.VariantOptions, &v); err == nil {
+			resp["variantOptions"] = v
+		}
+	}
+	if len(product.Specs) > 0 {
+		var v any
+		if err := json.Unmarshal(product.Specs, &v); err == nil {
+			resp["specs"] = v
+		}
+	}
+	if len(product.FAQ) > 0 {
+		var v any
+		if err := json.Unmarshal(product.FAQ, &v); err == nil {
+			resp["faq"] = v
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": resp})
 }
 
 func (h *Handler) AdminCreateProduct(c *gin.Context) {
