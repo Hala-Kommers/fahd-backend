@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -9,6 +10,60 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+type adminProductUpsertRequest struct {
+	Title            string  `json:"title"`
+	Slug             string  `json:"slug"`
+	SKU              string  `json:"sku"`
+	Status           string  `json:"status"`
+	Category         struct {
+		ID *int64 `json:"id"`
+	} `json:"category"`
+	DescriptionShort string  `json:"descriptionShort"`
+	DescriptionLong  string  `json:"descriptionLong"`
+	Pricing          struct {
+		Cost      *float64 `json:"cost"`
+		Price     float64  `json:"price"`
+		CompareAt *float64 `json:"compareAt"`
+		Currency  string   `json:"currency"`
+	} `json:"pricing"`
+	Inventory struct {
+		Mode              string `json:"mode"`
+		StockTotal        int    `json:"stockTotal"`
+		LowStockThreshold int    `json:"lowStockThreshold"`
+	} `json:"inventory"`
+	IsFeatured        bool                   `json:"isFeatured"`
+	HasVariants       bool                   `json:"hasVariants"`
+	VariantOptions    []any                  `json:"variantOptions"`
+	Specs             []map[string]any       `json:"specs"`
+	FAQ               []map[string]any       `json:"faq"`
+	UsageInstructions *string                `json:"usageInstructions"`
+	PricingTiers      []adminPricingTierReq  `json:"pricingTiers"`
+	Images            []adminImageReq        `json:"images"`
+	Variants          []adminVariantReq      `json:"variants"`
+}
+
+type adminPricingTierReq struct {
+	Qty           int      `json:"qty"`
+	Label         *string  `json:"label"`
+	OriginalPrice float64  `json:"originalPrice"`
+	FinalPrice    float64  `json:"finalPrice"`
+}
+
+type adminImageReq struct {
+	URL       string `json:"url"`
+	IsPrimary bool   `json:"isPrimary"`
+	SortOrder int    `json:"sortOrder"`
+}
+
+type adminVariantReq struct {
+	SKU           string         `json:"sku"`
+	Attributes    map[string]any `json:"attributes"`
+	PriceOverride *float64       `json:"priceOverride"`
+	Stock         int            `json:"stock"`
+	Image         *string        `json:"image"`
+	IsActive      *bool          `json:"isActive"`
+}
 
 func (h *Handler) AdminListProducts(c *gin.Context) {
 	type adminProductListItem struct {
@@ -185,41 +240,94 @@ func (h *Handler) AdminGetProduct(c *gin.Context) {
 }
 
 func (h *Handler) AdminCreateProduct(c *gin.Context) {
-	var payload map[string]any
-	if err := c.ShouldBindJSON(&payload); err != nil {
+	var req adminProductUpsertRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid product payload"})
 		return
 	}
-	if strings.TrimSpace(toString(payload["title"])) == "" || strings.TrimSpace(toString(payload["sku"])) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "title and sku are required"})
+	if err := validateAdminProductUpsert(req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if _, ok := payload["status"]; !ok {
-		payload["status"] = "draft"
+
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
+		return
 	}
-	if _, ok := payload["currency"]; !ok {
-		payload["currency"] = "SAR"
-	}
-	if err := h.db.Table("products").Create(&payload).Error; err != nil {
+
+	prod := map[string]any{}
+	applyProductBaseMap(&prod, req)
+	if err := tx.Table("products").Create(&prod).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create product"})
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": payload})
+
+	var created struct{ ID int64 }
+	if err := tx.Table("products").Select("id").Where("sku = ?", req.SKU).First(&created).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read created product"})
+		return
+	}
+
+	if err := upsertProductChildren(tx, created.ID, req); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create product"})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": gin.H{"id": created.ID}})
 }
 
 func (h *Handler) AdminUpdateProduct(c *gin.Context) {
 	id := c.Param("id")
-	var payload map[string]any
-	if err := c.ShouldBindJSON(&payload); err != nil {
+	productID, err := strconv.ParseInt(id, 10, 64)
+	if err != nil || productID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid product id"})
+		return
+	}
+
+	var req adminProductUpsertRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid product payload"})
 		return
 	}
-	delete(payload, "id")
-	if err := h.db.Table("products").Where("id = ?", id).Updates(payload).Error; err != nil {
+	if err := validateAdminProductUpsert(req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
+		return
+	}
+
+	base := map[string]any{}
+	applyProductBaseMap(&base, req)
+	if err := tx.Table("products").Where("id = ?", productID).Updates(base).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update product"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": id}})
+
+	if err := upsertProductChildren(tx, productID, req); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update product"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": productID}})
 }
 
 func (h *Handler) AdminDeleteProduct(c *gin.Context) {
@@ -229,6 +337,147 @@ func (h *Handler) AdminDeleteProduct(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": id, "deleted": true}})
+}
+
+func validateAdminProductUpsert(req adminProductUpsertRequest) error {
+	if strings.TrimSpace(req.Title) == "" {
+		return fmt.Errorf("title is required")
+	}
+	if strings.TrimSpace(req.SKU) == "" {
+		return fmt.Errorf("sku is required")
+	}
+	if req.Pricing.Price <= 0 {
+		return fmt.Errorf("pricing.price must be greater than 0")
+	}
+	if req.Inventory.StockTotal < 0 {
+		return fmt.Errorf("inventory.stockTotal cannot be negative")
+	}
+	if req.Inventory.LowStockThreshold < 0 {
+		return fmt.Errorf("inventory.lowStockThreshold cannot be negative")
+	}
+	for _, item := range req.PricingTiers {
+		if item.Qty <= 0 {
+			return fmt.Errorf("pricingTiers.qty must be greater than 0")
+		}
+	}
+	for _, image := range req.Images {
+		if strings.TrimSpace(image.URL) == "" {
+			return fmt.Errorf("images.url is required")
+		}
+	}
+	for _, variant := range req.Variants {
+		if strings.TrimSpace(variant.SKU) == "" {
+			return fmt.Errorf("variants.sku is required")
+		}
+		if variant.Stock < 0 {
+			return fmt.Errorf("variants.stock cannot be negative")
+		}
+	}
+	return nil
+}
+
+func applyProductBaseMap(base *map[string]any, req adminProductUpsertRequest) {
+	status := strings.TrimSpace(req.Status)
+	if status == "" {
+		status = "draft"
+	}
+	currency := strings.TrimSpace(req.Pricing.Currency)
+	if currency == "" {
+		currency = "SAR"
+	}
+	inventoryMode := strings.TrimSpace(req.Inventory.Mode)
+	if inventoryMode == "" {
+		inventoryMode = "global"
+	}
+
+	variantOptionsJSON, _ := json.Marshal(req.VariantOptions)
+	specsJSON, _ := json.Marshal(req.Specs)
+	faqJSON, _ := json.Marshal(req.FAQ)
+
+	*base = map[string]any{
+		"title":               strings.TrimSpace(req.Title),
+		"slug":                strings.TrimSpace(req.Slug),
+		"sku":                 strings.TrimSpace(req.SKU),
+		"status":              status,
+		"category_id":         req.Category.ID,
+		"description_short":   strings.TrimSpace(req.DescriptionShort),
+		"description_long":    strings.TrimSpace(req.DescriptionLong),
+		"cost":                req.Pricing.Cost,
+		"price":               req.Pricing.Price,
+		"compare_at":          req.Pricing.CompareAt,
+		"currency":            currency,
+		"inventory_mode":      inventoryMode,
+		"stock_total":         req.Inventory.StockTotal,
+		"low_stock_threshold": req.Inventory.LowStockThreshold,
+		"is_featured":         req.IsFeatured,
+		"has_variants":        req.HasVariants,
+		"variant_options":     variantOptionsJSON,
+		"specs":               specsJSON,
+		"faq":                 faqJSON,
+		"usage_instructions":  req.UsageInstructions,
+	}
+}
+
+func upsertProductChildren(tx *gorm.DB, productID int64, req adminProductUpsertRequest) error {
+	if err := tx.Table("pricing_tiers").Where("product_id = ?", productID).Delete(nil).Error; err != nil {
+		return fmt.Errorf("failed to replace pricing tiers")
+	}
+	for _, tier := range req.PricingTiers {
+		row := map[string]any{
+			"product_id":      productID,
+			"qty":             tier.Qty,
+			"label":           tier.Label,
+			"original_price":  tier.OriginalPrice,
+			"final_price":     tier.FinalPrice,
+		}
+		if err := tx.Table("pricing_tiers").Create(&row).Error; err != nil {
+			return fmt.Errorf("failed to save pricing tiers")
+		}
+	}
+
+	if err := tx.Table("product_images").Where("product_id = ?", productID).Delete(nil).Error; err != nil {
+		return fmt.Errorf("failed to replace images")
+	}
+	for i, image := range req.Images {
+		sortOrder := image.SortOrder
+		if sortOrder == 0 {
+			sortOrder = i
+		}
+		row := map[string]any{
+			"product_id":  productID,
+			"url":         strings.TrimSpace(image.URL),
+			"is_primary":  image.IsPrimary,
+			"sort_order":  sortOrder,
+		}
+		if err := tx.Table("product_images").Create(&row).Error; err != nil {
+			return fmt.Errorf("failed to save images")
+		}
+	}
+
+	if err := tx.Table("product_variants").Where("product_id = ?", productID).Delete(nil).Error; err != nil {
+		return fmt.Errorf("failed to replace variants")
+	}
+	for _, variant := range req.Variants {
+		attributesJSON, _ := json.Marshal(variant.Attributes)
+		isActive := true
+		if variant.IsActive != nil {
+			isActive = *variant.IsActive
+		}
+		row := map[string]any{
+			"product_id":      productID,
+			"sku":             strings.TrimSpace(variant.SKU),
+			"attributes":      attributesJSON,
+			"price_override":  variant.PriceOverride,
+			"stock":           variant.Stock,
+			"image":           variant.Image,
+			"is_active":       isActive,
+		}
+		if err := tx.Table("product_variants").Create(&row).Error; err != nil {
+			return fmt.Errorf("failed to save variants")
+		}
+	}
+
+	return nil
 }
 
 func (h *Handler) AdminListOrders(c *gin.Context) {
