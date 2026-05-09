@@ -13,7 +13,7 @@ import (
 
 func NewRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
 	router := gin.New()
-	handler := NewHandler(db)
+	handler := NewHandler(db, cfg)
 
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
@@ -42,6 +42,16 @@ func NewRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
 	api.GET("/orders/:id", handler.GetOrder)
 	api.POST("/chat/start", handler.StartChat)
 	api.POST("/chat/message", handler.SendChatMessage)
+	api.POST("/auth/login", handler.Login)
+	api.POST("/auth/refresh", handler.Refresh)
+	api.POST("/auth/logout", handler.Logout)
+	api.GET("/auth/me", handler.Me)
+
+	admin := api.Group("/admin")
+	admin.Use(handler.RequireAdmin())
+	admin.GET("/session", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true}})
+	})
 
 	return router
 }

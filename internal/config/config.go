@@ -10,7 +10,7 @@ import (
 type Config struct {
 	DatabaseURL    string
 	Port           string
-	SessionSecret  string
+	JWTSecret      string
 	FrontendOrigin string
 	AIProvider     string
 	AIAPIKey       string
@@ -22,7 +22,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		DatabaseURL:    os.Getenv("DATABASE_URL"),
 		Port:           getWithDefault("PORT", "8080"),
-		SessionSecret:  os.Getenv("SESSION_SECRET"),
+		JWTSecret:      os.Getenv("JWT_SECRET"),
 		FrontendOrigin: os.Getenv("FRONTEND_ORIGIN"),
 		AIProvider:     os.Getenv("AI_PROVIDER"),
 		AIAPIKey:       os.Getenv("AI_API_KEY"),
@@ -31,8 +31,8 @@ func Load() (Config, error) {
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
 	}
-	if cfg.SessionSecret == "" {
-		return Config{}, fmt.Errorf("SESSION_SECRET is required")
+	if cfg.JWTSecret == "" {
+		return Config{}, fmt.Errorf("JWT_SECRET is required")
 	}
 	if cfg.FrontendOrigin == "" {
 		return Config{}, fmt.Errorf("FRONTEND_ORIGIN is required")

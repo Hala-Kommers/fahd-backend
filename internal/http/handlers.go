@@ -8,12 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"fahd-backend/internal/config"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 type Handler struct {
-	db *gorm.DB
+	db  *gorm.DB
+	cfg config.Config
 }
 
 type productListItem struct {
@@ -33,8 +36,8 @@ type productListItem struct {
 	Rating       float64  `json:"rating"`
 }
 
-func NewHandler(db *gorm.DB) *Handler {
-	return &Handler{db: db}
+func NewHandler(db *gorm.DB, cfg config.Config) *Handler {
+	return &Handler{db: db, cfg: cfg}
 }
 
 func (h *Handler) ListProducts(c *gin.Context) {

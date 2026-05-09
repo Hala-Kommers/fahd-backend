@@ -1,7 +1,7 @@
 -- +goose Up
 
 INSERT INTO users (username, name, email, password_hash, role)
-VALUES ('admin', 'Admin User', 'admin@fahd.local', '$2a$10$replace.this.with.real.hash', 'admin')
+VALUES ('admin', 'Admin User', 'admin@fahd.local', '$2a$12$P/GdDUYY6kNL3Qtz.WygBe7XvjbdhU3SEgDTmjysRHfRHHnirh0Rq', 'admin')
 ON CONFLICT (username) DO NOTHING;
 
 INSERT INTO categories (name, slug, icon, description, sort_order)
