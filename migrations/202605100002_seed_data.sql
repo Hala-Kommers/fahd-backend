@@ -14,7 +14,7 @@ ON CONFLICT (slug) DO NOTHING;
 INSERT INTO products (
   title, slug, sku, status, description_short, description_long, category_id,
   cost, price, compare_at, currency, inventory_mode, stock_total, low_stock_threshold,
-  is_featured, has_variants, variant_options, specs, faq, usage_instructions, pricing_tiers_json,
+  is_featured, has_variants, variant_options, specs, faq, usage_instructions,
   sales_count, rating
 )
 SELECT
@@ -27,7 +27,6 @@ SELECT
   '[{"key":"volume","value":"100ml"}]'::jsonb,
   '[{"question":"How long does it last?","answer":"6-8 hours"}]'::jsonb,
   'Spray on pulse points from 15cm distance.',
-  '[{"qty":1,"label":"قطعة واحدة","originalPrice":160,"finalPrice":120}]'::jsonb,
   0, 0
 FROM categories c
 WHERE c.slug = 'perfumes'
@@ -70,7 +69,7 @@ SELECT
   '{"botName":"فهد","tone":"friendly_saudi","style":"concise","language":"ar-SA","emojiLevel":"medium"}'::jsonb,
   '{"systemPrompt":"You are Fahd store assistant","allowedSources":["catalog","product_faq","store_policies"]}'::jsonb,
   '{"welcome":"هلا 👋 أبشر..."}'::jsonb,
-  '{"paymentMethodsEnabled":["COD","Online"]}'::jsonb
+  '{"paymentMethodsEnabled":["COD","Paymob"]}'::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM bot_config);
 
 -- +goose Down
