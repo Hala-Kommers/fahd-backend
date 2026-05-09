@@ -165,7 +165,7 @@ GET  /api/auth/me
 
 Recommended approach:
 
-- HTTP-only secure cookie session.
+- Use JWT.
 - Passwords hashed with `bcrypt`.
 - Middleware: `RequireAdmin`.
 
