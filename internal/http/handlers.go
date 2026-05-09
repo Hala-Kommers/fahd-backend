@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -274,14 +275,20 @@ func (h *Handler) ValidateCoupon(c *gin.Context) {
 }
 
 type createOrderRequest struct {
-	PaymentMethod string  `json:"paymentMethod"`
-	Subtotal      float64 `json:"subtotal"`
-	Shipping      float64 `json:"shipping"`
-	Discount      float64 `json:"discount"`
-	GrandTotal    float64 `json:"grandTotal"`
-	CustomerName  string  `json:"customerName"`
-	CustomerPhone string  `json:"customerPhone"`
-	AddressRaw    string  `json:"addressRaw"`
+	PaymentMethod string             `json:"paymentMethod"`
+	CustomerName  string             `json:"customerName"`
+	CustomerPhone string             `json:"customerPhone"`
+	CustomerEmail string             `json:"customerEmail"`
+	AddressRaw    string             `json:"addressRaw"`
+	AddressCity   string             `json:"addressCity"`
+	CouponCode    string             `json:"couponCode"`
+	Items         []createOrderItem  `json:"items"`
+}
+
+type createOrderItem struct {
+	ProductID int64  `json:"productId"`
+	VariantID *int64 `json:"variantId"`
+	Qty       int    `json:"qty"`
 }
 
 func (h *Handler) CreateOrder(c *gin.Context) {
@@ -298,27 +305,202 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payment method"})
 		return
 	}
+	if len(req.Items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "items are required"})
+		return
+	}
+
+	type pricedItem struct {
+		ProductID int64
+		VariantID *int64
+		Title     string
+		SKU       string
+		Qty       int
+		UnitPrice float64
+		LineTotal float64
+	}
+
+	pricedItems := make([]pricedItem, 0, len(req.Items))
+	subtotal := 0.0
+
+	for _, item := range req.Items {
+		if item.ProductID <= 0 || item.Qty <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "each item must include valid productId and qty"})
+			return
+		}
+
+		var product struct {
+			ID    int64
+			Title string
+			SKU   string
+			Price float64
+		}
+		if err := h.db.Table("products").
+			Select("id, title, sku, price").
+			Where("id = ? AND status = ?", item.ProductID, "active").
+			First(&product).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid product: %d", item.ProductID)})
+			return
+		}
+
+		unitPrice := product.Price
+		if item.VariantID != nil {
+			var variant struct {
+				ID            int64
+				ProductID     int64
+				PriceOverride *float64
+			}
+			if err := h.db.Table("product_variants").
+				Select("id, product_id, price_override").
+				Where("id = ? AND product_id = ? AND is_active = TRUE", *item.VariantID, item.ProductID).
+				First(&variant).Error; err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid variant for product: %d", item.ProductID)})
+				return
+			}
+			if variant.PriceOverride != nil {
+				unitPrice = *variant.PriceOverride
+			}
+		}
+
+		lineTotal := roundMoney(unitPrice * float64(item.Qty))
+		subtotal += lineTotal
+		pricedItems = append(pricedItems, pricedItem{
+			ProductID: item.ProductID,
+			VariantID: item.VariantID,
+			Title:     product.Title,
+			SKU:       product.SKU,
+			Qty:       item.Qty,
+			UnitPrice: roundMoney(unitPrice),
+			LineTotal: lineTotal,
+		})
+	}
+
+	subtotal = roundMoney(subtotal)
+	shipping := 0.0
+	discount := 0.0
+
+	if code := strings.TrimSpace(req.CouponCode); code != "" {
+		var coupon struct {
+			Code      string
+			Type      string
+			Value     float64
+			MinOrder  *float64
+			ExpiresAt *time.Time
+			IsActive  bool
+		}
+		if err := h.db.Table("coupons").
+			Select("code, type, value, min_order, expires_at, is_active").
+			Where("LOWER(code) = LOWER(?) AND is_active = TRUE", code).
+			First(&coupon).Error; err == nil {
+			valid := true
+			if coupon.ExpiresAt != nil && coupon.ExpiresAt.Before(time.Now()) {
+				valid = false
+			}
+			if coupon.MinOrder != nil && subtotal < *coupon.MinOrder {
+				valid = false
+			}
+			if valid {
+				if coupon.Type == "percentage" {
+					discount = roundMoney((subtotal * coupon.Value) / 100)
+				} else {
+					discount = roundMoney(coupon.Value)
+				}
+			}
+		}
+	}
+
+	if discount > subtotal {
+		discount = subtotal
+	}
+	grandTotal := roundMoney(subtotal + shipping - discount)
 
 	order := Order{
 		OrderNumber:   fmt.Sprintf("ORD-%d", time.Now().UnixNano()),
 		Status:        "new",
 		PaymentMethod: req.PaymentMethod,
-		Subtotal:      req.Subtotal,
-		Shipping:      req.Shipping,
-		Discount:      req.Discount,
-		GrandTotal:    req.GrandTotal,
+		Subtotal:      subtotal,
+		Shipping:      shipping,
+		Discount:      discount,
+		GrandTotal:    grandTotal,
 		Currency:      "SAR",
 		CustomerName:  req.CustomerName,
 		CustomerPhone: req.CustomerPhone,
 		AddressRaw:    req.AddressRaw,
 	}
 
-	if err := h.db.Create(&order).Error; err != nil {
+	tx := h.db.Begin()
+	if tx.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	if err := tx.Table("orders").Create(&map[string]any{
+		"order_number":      order.OrderNumber,
+		"status":            order.Status,
+		"payment_method":    order.PaymentMethod,
+		"payment_status":    "pending",
+		"subtotal":          order.Subtotal,
+		"shipping":          order.Shipping,
+		"discount":          order.Discount,
+		"grand_total":       order.GrandTotal,
+		"currency":          order.Currency,
+		"coupon_code":       strings.TrimSpace(req.CouponCode),
+		"customer_name":     req.CustomerName,
+		"customer_phone":    req.CustomerPhone,
+		"customer_email":    strings.TrimSpace(req.CustomerEmail),
+		"address_raw":       req.AddressRaw,
+		"address_city":      strings.TrimSpace(req.AddressCity),
+		"address_confidence": 0,
+	}).Error; err != nil {
+		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create order"})
 		return
 	}
 
+	var created struct{ ID int64 }
+	if err := tx.Table("orders").Select("id").Where("order_number = ?", order.OrderNumber).First(&created).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read created order"})
+		return
+	}
+
+	for _, item := range pricedItems {
+		payload := map[string]any{
+			"order_id":    created.ID,
+			"product_id":  item.ProductID,
+			"sku":         item.SKU,
+			"title":       item.Title,
+			"qty":         item.Qty,
+			"unit_price":  item.UnitPrice,
+			"line_total":  item.LineTotal,
+		}
+		if item.VariantID != nil {
+			payload["variant_id"] = *item.VariantID
+		}
+		if err := tx.Table("order_items").Create(&payload).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create order items"})
+			return
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to finalize order"})
+		return
+	}
+
+	order.ID = created.ID
+
 	c.JSON(http.StatusCreated, gin.H{"data": order})
+}
+
+func roundMoney(value float64) float64 {
+	return math.Round(value*100) / 100
 }
 
 func (h *Handler) GetOrder(c *gin.Context) {
