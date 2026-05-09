@@ -5,13 +5,11 @@ Goal: create a separate Go backend for `fahd-store`, replacing the current Node/
 **Recommended Stack**
 
 - Go HTTP framework: `chi` or `gin`
-- Recommended: `chi`
-- Reason: small, explicit, clean for REST APIs, easy middleware composition.
+- Recommended: `gin`
 
 - Database: PostgreSQL
 - ORM/query layer: `sqlc` or `gorm`
-- Recommended: `sqlc`
-- Reason: safer SQL, strong typing, less magic, better long-term maintainability.
+- Recommended: `gorm`
 
 - Migrations: `goose` or `atlas`
 - Recommended: `goose`
@@ -337,26 +335,29 @@ Deliverable:
 
 - Backend can run locally and deploy cleanly.
 
-**Execution Order**
+## Best Practices to Implement
 
-1. Go project foundation.
-2. PostgreSQL schema/migrations.
-3. Storefront APIs.
-4. Admin auth.
-5. Admin APIs.
-6. WebSocket.
-7. AI service.
-8. Frontend real API integration.
-9. Deployment setup.
+1- Clean Architecture
 
-**Main Decisions Needed**
+- Separation of concerns
+- Dependency injection
+- Interface-driven design
+- Error Handling
 
-1. Do you want the Go backend in a new folder like `D:\fahd-backend`, or inside the old `D:\fahd-store` repo?
-2. Do you want to use PostgreSQL from the current project, or start with a fresh database?
-3. Should the first backend implementation prioritize storefront APIs first, or admin/auth first?
+2- Custom error types
 
-My recommendation:
+- Proper error propagation
+- Logging and monitoring
+- Testing
 
-- Create a new project: `D:\fahd-backend`
-- Use PostgreSQL
-- Implement storefront APIs first, then admin/auth, then AI/WebSocket.
+3- JWT authentication
+
+- Input validation and sanitization
+- SQL injection prevention
+- Rate limiting
+- Performance
+
+4- Database query optimization
+
+- Connection pooling
+- Caching strategies (optional: Redis)
