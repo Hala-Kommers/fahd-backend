@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -15,16 +16,55 @@ type Handler struct {
 	db *gorm.DB
 }
 
+type productListItem struct {
+	ID           int64    `json:"id"`
+	Title        string   `json:"title"`
+	Slug         string   `json:"slug"`
+	SKU          string   `json:"sku"`
+	Status       string   `json:"status"`
+	CategoryID   *int64   `json:"categoryId"`
+	CategoryName *string  `json:"categoryName"`
+	Price        float64  `json:"price"`
+	CompareAt    *float64 `json:"compareAt"`
+	Currency     string   `json:"currency"`
+	StockTotal   int      `json:"stockTotal"`
+	IsFeatured   bool     `json:"isFeatured"`
+	SalesCount   int      `json:"salesCount"`
+	Rating       float64  `json:"rating"`
+}
+
 func NewHandler(db *gorm.DB) *Handler {
 	return &Handler{db: db}
 }
 
 func (h *Handler) ListProducts(c *gin.Context) {
-	var products []Product
-	query := h.db.Model(&Product{}).Where("status = ?", "active")
+	var products []productListItem
+	query := h.db.Model(&Product{}).
+		Select("products.id, products.title, products.slug, products.sku, products.status, products.category_id, categories.name AS category_name, products.price, products.compare_at, products.currency, products.stock_total, products.is_featured, products.sales_count, products.rating").
+		Joins("LEFT JOIN categories ON categories.id = products.category_id").
+		Where("status = ?", "active")
+
+	page := 1
+	limit := 20
+	if v := c.Query("page"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	if v := c.Query("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			if parsed < 1 {
+				parsed = 1
+			}
+			if parsed > 100 {
+				parsed = 100
+			}
+			limit = parsed
+		}
+	}
 
 	if category := strings.TrimSpace(c.Query("category")); category != "" {
-		query = query.Joins("JOIN categories ON categories.id = products.category_id").Where("categories.slug = ?", category)
+		query = query.Where("categories.slug = ?", category)
 	}
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		like := "%" + search + "%"
@@ -50,20 +90,37 @@ func (h *Handler) ListProducts(c *gin.Context) {
 	case "title_asc":
 		query = query.Order("title ASC")
 	default:
-		query = query.Order("updated_at DESC")
+		query = query.Order("products.updated_at DESC")
 	}
 
-	if err := query.Find(&products).Error; err != nil {
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to count products"})
+		return
+	}
+
+	offset := (page - 1) * limit
+	if err := query.Offset(offset).Limit(limit).Find(&products).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load products"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"data": products})
+	totalPages := int((total + int64(limit) - 1) / int64(limit))
+	c.JSON(http.StatusOK, gin.H{
+		"data": products,
+		"meta": gin.H{
+			"page":       page,
+			"limit":      limit,
+			"total":      total,
+			"totalPages": totalPages,
+		},
+	})
 }
 
 func (h *Handler) GetProduct(c *gin.Context) {
 	id := c.Param("id")
 	var product Product
+	var categoryName *string
 	if err := h.db.Where("id = ?", id).First(&product).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
@@ -72,7 +129,101 @@ func (h *Handler) GetProduct(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load product"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": product})
+
+	if product.CategoryID != nil {
+		if err := h.db.Model(&Category{}).Select("name").Where("id = ?", *product.CategoryID).Scan(&categoryName).Error; err != nil {
+			categoryName = nil
+		}
+	}
+	var images []ProductImage
+	if err := h.db.Where("product_id = ?", product.ID).Order("is_primary DESC, sort_order ASC").Find(&images).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load product images"})
+		return
+	}
+
+	var variants []ProductVariant
+	if err := h.db.Where("product_id = ?", product.ID).Order("created_at ASC").Find(&variants).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load product variants"})
+		return
+	}
+
+	var pricingTiers []PricingTier
+	if err := h.db.Where("product_id = ?", product.ID).Order("qty ASC").Find(&pricingTiers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load pricing tiers"})
+		return
+	}
+
+	variantPayload := make([]gin.H, 0, len(variants))
+	for _, variant := range variants {
+		item := gin.H{
+			"id":            variant.ID,
+			"productId":     variant.ProductID,
+			"sku":           variant.SKU,
+			"priceOverride": variant.PriceOverride,
+			"stock":         variant.Stock,
+			"image":         variant.Image,
+			"isActive":      variant.IsActive,
+			"createdAt":     variant.CreatedAt,
+			"updatedAt":     variant.UpdatedAt,
+		}
+		if len(variant.Attributes) > 0 {
+			var attributes any
+			if err := json.Unmarshal(variant.Attributes, &attributes); err == nil {
+				item["attributes"] = attributes
+			}
+		}
+		variantPayload = append(variantPayload, item)
+	}
+
+	data := gin.H{
+		"id":                product.ID,
+		"title":             product.Title,
+		"slug":              product.Slug,
+		"sku":               product.SKU,
+		"status":            product.Status,
+		"descriptionShort":  product.DescriptionShort,
+		"descriptionLong":   product.DescriptionLong,
+		"categoryId":        product.CategoryID,
+		"categoryName":      categoryName,
+		"cost":              product.Cost,
+		"price":             product.Price,
+		"compareAt":         product.CompareAt,
+		"currency":          product.Currency,
+		"inventoryMode":     product.InventoryMode,
+		"stockTotal":        product.StockTotal,
+		"lowStockThreshold": product.LowStockThreshold,
+		"isFeatured":        product.IsFeatured,
+		"hasVariants":       product.HasVariants,
+		"usageInstructions": product.UsageInstructions,
+		"salesCount":        product.SalesCount,
+		"rating":            product.Rating,
+		"images":            images,
+		"variants":          variantPayload,
+		"pricingTiers":      pricingTiers,
+		"createdAt":         product.CreatedAt,
+		"updatedAt":         product.UpdatedAt,
+	}
+
+	if len(product.VariantOptions) > 0 {
+		var variantOptions any
+		if err := json.Unmarshal(product.VariantOptions, &variantOptions); err == nil {
+			data["variantOptions"] = variantOptions
+		}
+	}
+	if len(product.Specs) > 0 {
+		var specs any
+		if err := json.Unmarshal(product.Specs, &specs); err == nil {
+			data["specs"] = specs
+		}
+	}
+	if len(product.FAQ) > 0 {
+		var faq any
+		if err := json.Unmarshal(product.FAQ, &faq); err == nil {
+			data["faq"] = faq
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": data})
 }
 
 func (h *Handler) ListCategories(c *gin.Context) {
@@ -140,7 +291,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "customer name, phone, and address are required"})
 		return
 	}
-	if req.PaymentMethod != "COD" && req.PaymentMethod != "Online" {
+	if req.PaymentMethod != "COD" && req.PaymentMethod != "Paymob" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payment method"})
 		return
 	}

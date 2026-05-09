@@ -18,14 +18,55 @@ type Product struct {
 	DescriptionShort string    `json:"descriptionShort"`
 	DescriptionLong  string    `json:"descriptionLong"`
 	CategoryID       *int64    `json:"categoryId"`
+	Cost             *float64  `json:"cost"`
 	Price            float64   `json:"price"`
 	CompareAt        *float64  `json:"compareAt"`
 	Currency         string    `json:"currency"`
+	InventoryMode    string    `json:"inventoryMode"`
 	StockTotal       int       `json:"stockTotal"`
+	LowStockThreshold int      `json:"lowStockThreshold"`
 	IsFeatured       bool      `json:"isFeatured"`
+	HasVariants      bool      `json:"hasVariants"`
+	VariantOptions   []byte    `json:"variantOptions"`
+	Specs            []byte    `json:"specs"`
+	FAQ              []byte    `json:"faq"`
+	UsageInstructions *string  `json:"usageInstructions"`
 	SalesCount       int       `json:"salesCount"`
 	Rating           float64   `json:"rating"`
+	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
+}
+
+type ProductImage struct {
+	ID        int64     `gorm:"primaryKey" json:"id"`
+	ProductID int64     `json:"productId"`
+	URL       string    `json:"url"`
+	IsPrimary bool      `json:"isPrimary"`
+	SortOrder int       `json:"sortOrder"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type ProductVariant struct {
+	ID            int64      `gorm:"primaryKey" json:"id"`
+	ProductID     int64      `json:"productId"`
+	SKU           string     `json:"sku"`
+	Attributes    []byte     `json:"attributes"`
+	PriceOverride *float64   `json:"priceOverride"`
+	Stock         int        `json:"stock"`
+	Image         *string    `json:"image"`
+	IsActive      bool       `json:"isActive"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+}
+
+type PricingTier struct {
+	ID            int64     `gorm:"primaryKey" json:"id"`
+	ProductID     int64     `json:"productId"`
+	Qty           int       `json:"qty"`
+	Label         *string   `json:"label"`
+	OriginalPrice float64   `json:"originalPrice"`
+	FinalPrice    float64   `json:"finalPrice"`
+	CreatedAt     time.Time `json:"createdAt"`
 }
 
 type Coupon struct {
