@@ -11,8 +11,9 @@ import (
 	"gorm.io/gorm"
 )
 
-func NewRouter(cfg config.Config, _ *gorm.DB) *gin.Engine {
+func NewRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
 	router := gin.New()
+	handler := NewHandler(db)
 
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
@@ -31,6 +32,16 @@ func NewRouter(cfg config.Config, _ *gorm.DB) *gin.Engine {
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+
+	api := router.Group("/api")
+	api.GET("/products", handler.ListProducts)
+	api.GET("/products/:id", handler.GetProduct)
+	api.GET("/categories", handler.ListCategories)
+	api.POST("/coupons/validate", handler.ValidateCoupon)
+	api.POST("/orders", handler.CreateOrder)
+	api.GET("/orders/:id", handler.GetOrder)
+	api.POST("/chat/start", handler.StartChat)
+	api.POST("/chat/message", handler.SendChatMessage)
 
 	return router
 }
