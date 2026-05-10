@@ -247,7 +247,7 @@ func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[
 	}, nil
 }
 
-func (s *OrderService) Lookup(ctx context.Context, orderID int64, orderNumber string) (map[string]any, error) {
+func (s *OrderService) Lookup(ctx context.Context, orderID int64, orderNumber string, customerPhone string) (map[string]any, error) {
 	db := s.db.WithContext(ctx).Table("orders")
 	if orderID > 0 {
 		db = db.Where("id = ?", orderID)
@@ -274,6 +274,14 @@ func (s *OrderService) Lookup(ctx context.Context, orderID int64, orderNumber st
 	if err := db.Select("id, order_number, status, payment_method, subtotal, shipping, discount, grand_total, currency, customer_name, customer_phone, created_at").
 		First(&order).Error; err != nil {
 		return nil, fmt.Errorf("order not found")
+	}
+
+	if customerPhone != "" {
+		normalizedStored := strings.TrimSpace(order.CustomerPhone)
+		normalizedInput := strings.TrimSpace(customerPhone)
+		if !strings.EqualFold(normalizedStored, normalizedInput) {
+			return nil, fmt.Errorf("customer phone does not match this order")
+		}
 	}
 
 	return map[string]any{

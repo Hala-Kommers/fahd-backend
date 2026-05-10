@@ -91,12 +91,13 @@ func NewLookupOrderTool(orders *services.OrderService) *LookupOrderTool {
 func (t *LookupOrderTool) Definition() ai.ToolDefinition {
 	return ai.ToolDefinition{
 		Name:        "lookup_order",
-		Description: "Look up an existing order by ID or order number. Returns order status and basic details.",
+		Description: "Look up an existing order by order number. Requires the customer's phone number for verification. Returns order status and basic details.",
 		Parameters: map[string]any{
-			"type": "object",
+			"type":     "object",
+			"required": []string{"orderNumber", "customerPhone"},
 			"properties": map[string]any{
-				"orderId":     map[string]any{"type": "integer", "description": "Order ID."},
-				"orderNumber": map[string]any{"type": "string", "description": "Order number (e.g. ORD-...)."},
+				"orderNumber":   map[string]any{"type": "string", "description": "Order number (e.g. ORD-...)."},
+				"customerPhone": map[string]any{"type": "string", "description": "Customer phone number for ownership verification."},
 			},
 		},
 	}
@@ -105,7 +106,8 @@ func (t *LookupOrderTool) Definition() ai.ToolDefinition {
 func (t *LookupOrderTool) Execute(ctx context.Context, arguments map[string]any) (ai.ToolResult, error) {
 	orderID := int64Arg(arguments, "orderId")
 	orderNumber := stringArg(arguments, "orderNumber")
-	data, err := t.orders.Lookup(ctx, orderID, orderNumber)
+	customerPhone := stringArg(arguments, "customerPhone")
+	data, err := t.orders.Lookup(ctx, orderID, orderNumber, customerPhone)
 	if err != nil {
 		return ai.ToolResult{}, err
 	}
