@@ -268,12 +268,7 @@ func (h *Handler) ValidateCoupon(c *gin.Context) {
 		return
 	}
 
-	discount := coupon.Value
-	if coupon.Type == "percentage" {
-		discount = (req.Subtotal * coupon.Value) / 100
-	}
-
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"code": coupon.Code, "discount": discount, "type": coupon.Type}})
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"code": coupon.Code, "discount": coupon.Value, "type": coupon.Type}})
 }
 
 type createOrderRequest struct {
