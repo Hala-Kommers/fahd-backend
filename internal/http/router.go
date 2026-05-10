@@ -77,6 +77,7 @@ func NewRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
 	admin.GET("/ai/stats", handler.AdminAIStats)
 	admin.GET("/conversations", handler.AdminListConversations)
 	admin.GET("/conversations/:id", handler.AdminGetConversation)
+	admin.POST("/conversations/:id/close", handler.AdminCloseConversation)
 
 	return router
 }

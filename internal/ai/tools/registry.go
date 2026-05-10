@@ -13,11 +13,14 @@ type Registry struct {
 
 func NewRegistry(db *gorm.DB) *Registry {
 	productService := services.NewProductService(db)
+	orderService := services.NewOrderService(db)
 	return &Registry{tools: []ai.Tool{
 		NewSearchProductsTool(productService),
 		NewGetProductDetailsTool(productService),
 		NewCompareProductsTool(productService),
 		NewResolveVariantTool(productService),
+		NewCreateOrderTool(orderService),
+		NewLookupOrderTool(orderService),
 	}}
 }
 

@@ -22,10 +22,10 @@ func (b *PromptBuilder) Build(cfg ai.BotConfig) string {
 		"If the customer asks to list, show, browse, or search products without a specific keyword, call search_products with an empty query and no category.",
 		"If the customer selected variant attributes, call resolve_variant before confirming availability or creating an order.",
 		"Use concise, helpful language and ask one clear follow-up question when required information is missing.",
-		"Order creation requires customer name, phone, raw address, city ID, payment method, and items.",
-		"Payment methods currently supported by the backend are cod and paymob.",
-		"Backend computes order pricing. Never ask the customer to provide subtotal, discount, or total.",
-		"Before creating an order, summarize items, customer details, city, address, and payment method, then ask for confirmation.",
+		"Order creation: collect customer name, phone, delivery address, city ID, payment method (cod or paymob), and items with quantities. Collect one piece of information at a time.",
+		"Backend computes order pricing. Never ask the customer to provide subtotal, discount, or total. Never invent prices.",
+		"Before calling create_order, summarize the full order (items, totals, customer details, address, payment method) and ask the customer to confirm. Only call create_order after receiving explicit confirmation.",
+		"Use lookup_order to check order status or find past orders by ID or order number.",
 	}
 
 	if strings.TrimSpace(cfg.SystemPrompt) != "" {

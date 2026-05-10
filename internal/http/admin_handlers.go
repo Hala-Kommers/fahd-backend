@@ -719,16 +719,65 @@ func (h *Handler) AdminAIStats(c *gin.Context) {
 	var totalConversations int64
 	_ = h.db.Table("messages").Count(&totalMessages).Error
 	_ = h.db.Table("conversations").Count(&totalConversations).Error
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"messages": totalMessages, "conversations": totalConversations}})
+	usage := struct {
+		PromptTokens     int64 `json:"promptTokens"`
+		CompletionTokens int64 `json:"completionTokens"`
+		CacheWriteTokens int64 `json:"cacheWriteTokens"`
+		CacheReadTokens  int64 `json:"cacheReadTokens"`
+		ReasoningTokens  int64 `json:"reasoningTokens"`
+	}{}
+	_ = h.db.Table("messages").
+		Select("COALESCE(SUM(usage_prompt_tokens),0) AS prompt_tokens, COALESCE(SUM(usage_completion_tokens),0) AS completion_tokens, COALESCE(SUM(usage_cache_write_tokens),0) AS cache_write_tokens, COALESCE(SUM(usage_cache_read_tokens),0) AS cache_read_tokens, COALESCE(SUM(usage_reasoning_tokens),0) AS reasoning_tokens").
+		Scan(&usage).Error
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"messages":      totalMessages,
+		"conversations": totalConversations,
+		"usage":         usage,
+	}})
 }
 
 func (h *Handler) AdminListConversations(c *gin.Context) {
-	var rows []map[string]any
-	q := h.db.Table("conversations").Order("updated_at DESC")
-	if status := strings.TrimSpace(c.Query("status")); status != "" {
-		q = q.Where("status = ?", status)
+	type convoRow struct {
+		ID                  int64     `json:"id"`
+		Status              string    `json:"status"`
+		CustomerName        *string   `json:"customerName"`
+		CustomerPhone       *string   `json:"customerPhone"`
+		CreatedAt           time.Time `json:"createdAt"`
+		UpdatedAt           time.Time `json:"updatedAt"`
+		MessageCount        int64     `json:"messageCount"`
+		LastMessage         string    `json:"lastMessage"`
+		LastMessageRole     string    `json:"lastMessageRole"`
+		TotalPromptTokens   int64     `json:"totalPromptTokens"`
+		TotalCompletionTokens int64   `json:"totalCompletionTokens"`
 	}
-	if err := q.Find(&rows).Error; err != nil {
+	var rows []convoRow
+	q := `
+		SELECT c.id, c.status, c.customer_name, c.customer_phone,
+		       c.created_at, c.updated_at,
+		       COALESCE(mc.cnt,0) AS message_count,
+		       COALESCE(lm.content,'') AS last_message,
+		       COALESCE(lm.role,'') AS last_message_role,
+		       COALESCE(tu.prompt_tokens,0) AS total_prompt_tokens,
+		       COALESCE(tu.completion_tokens,0) AS total_completion_tokens
+		FROM conversations c
+		LEFT JOIN (SELECT conversation_id, COUNT(*) AS cnt FROM messages GROUP BY conversation_id) mc ON mc.conversation_id = c.id
+		LEFT JOIN LATERAL (
+			SELECT content, role FROM messages WHERE conversation_id = c.id AND content IS NOT NULL ORDER BY created_at DESC LIMIT 1
+		) lm ON TRUE
+		LEFT JOIN (
+			SELECT conversation_id,
+			       SUM(COALESCE(usage_prompt_tokens,0)) AS prompt_tokens,
+			       SUM(COALESCE(usage_completion_tokens,0)) AS completion_tokens
+			FROM messages GROUP BY conversation_id
+		) tu ON tu.conversation_id = c.id
+	`
+	args := []any{}
+	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		q += " WHERE c.status = ?"
+		args = append(args, status)
+	}
+	q += " ORDER BY c.updated_at DESC"
+	if err := h.db.Raw(q, args...).Scan(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load conversations"})
 		return
 	}
@@ -746,10 +795,46 @@ func (h *Handler) AdminGetConversation(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load conversation"})
 		return
 	}
-	var messages []map[string]any
-	_ = h.db.Table("messages").Where("conversation_id = ?", id).Order("timestamp ASC").Find(&messages).Error
+	type messageRow struct {
+		ID                    int64     `json:"id"`
+		Role                  string    `json:"role"`
+		Content               string    `json:"content"`
+		ToolCalls             *string   `json:"toolCalls"`
+		ToolResults           *string   `json:"toolResults"`
+		UsagePromptTokens     int       `json:"usagePromptTokens"`
+		UsageCompletionTokens int       `json:"usageCompletionTokens"`
+		UsageCacheWriteTokens int       `json:"usageCacheWriteTokens"`
+		UsageCacheReadTokens  int       `json:"usageCacheReadTokens"`
+		UsageReasoningTokens  int       `json:"usageReasoningTokens"`
+		Provider              string    `json:"provider"`
+		Model                 string    `json:"model"`
+		CreatedAt             time.Time `json:"createdAt"`
+	}
+	var messages []messageRow
+	if err := h.db.Table("messages").
+		Select("id, role, content, tool_calls, tool_results, COALESCE(usage_prompt_tokens,0) AS usage_prompt_tokens, COALESCE(usage_completion_tokens,0) AS usage_completion_tokens, COALESCE(usage_cache_write_tokens,0) AS usage_cache_write_tokens, COALESCE(usage_cache_read_tokens,0) AS usage_cache_read_tokens, COALESCE(usage_reasoning_tokens,0) AS usage_reasoning_tokens, COALESCE(provider,'') AS provider, COALESCE(model,'') AS model, created_at").
+		Where("conversation_id = ?", id).
+		Order("created_at ASC").
+		Find(&messages).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load messages"})
+		return
+	}
 	convo["messages"] = messages
 	c.JSON(http.StatusOK, gin.H{"data": convo})
+}
+
+func (h *Handler) AdminCloseConversation(c *gin.Context) {
+	id := c.Param("id")
+	var exists int64
+	if err := h.db.Table("conversations").Where("id = ?", id).Count(&exists).Error; err != nil || exists == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
+		return
+	}
+	if err := h.db.Table("conversations").Where("id = ?", id).Update("status", "closed").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to close conversation"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": id, "status": "closed"}})
 }
 
 func (h *Handler) createTableRow(c *gin.Context, table, requiredField string) {
