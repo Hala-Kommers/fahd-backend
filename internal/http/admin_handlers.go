@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -481,16 +482,65 @@ func upsertProductChildren(tx *gorm.DB, productID int64, req adminProductUpsertR
 }
 
 func (h *Handler) AdminListOrders(c *gin.Context) {
-	var rows []Order
-	q := h.db.Order("created_at DESC")
+	type adminOrderListItem struct {
+		ID                int64   `json:"id"`
+		OrderNumber       string  `json:"orderNumber"`
+		CreatedAt         time.Time `json:"createdAt"`
+		CustomerName      string  `json:"customerName"`
+		CustomerPhone     string  `json:"customerPhone"`
+		AddressCity       string  `json:"addressCity"`
+		Total             float64 `json:"total"`
+		PaymentMethod     string  `json:"paymentMethod"`
+		Status            string  `json:"status"`
+		AddressConfidence float64 `json:"confidence"`
+		RiskScore         float64 `json:"risk"`
+	}
+
+	page := 1
+	limit := 20
+	if v := c.Query("page"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	if v := c.Query("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			if parsed < 1 {
+				parsed = 1
+			}
+			if parsed > 100 {
+				parsed = 100
+			}
+			limit = parsed
+		}
+	}
+
+	var rows []adminOrderListItem
+	q := h.db.Table("orders").
+		Select("id, order_number, created_at, customer_name, customer_phone, address_city, grand_total AS total, payment_method, status, address_confidence, risk_score").
+		Order("created_at DESC")
+
 	if status := strings.TrimSpace(c.Query("status")); status != "" {
 		q = q.Where("status = ?", status)
 	}
-	if err := q.Find(&rows).Error; err != nil {
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		like := "%" + search + "%"
+		q = q.Where("order_number ILIKE ? OR customer_name ILIKE ? OR customer_phone ILIKE ?", like, like, like)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to count orders"})
+		return
+	}
+
+	offset := (page - 1) * limit
+	if err := q.Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load orders"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": rows})
+	totalPages := int((total + int64(limit) - 1) / int64(limit))
+	c.JSON(http.StatusOK, gin.H{"data": rows, "meta": gin.H{"page": page, "limit": limit, "total": total, "totalPages": totalPages}})
 }
 
 func (h *Handler) AdminGetOrder(c *gin.Context) {

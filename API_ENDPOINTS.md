@@ -610,6 +610,113 @@ Response:
 }
 ```
 
+## Admin Orders
+
+All admin order endpoints require `Authorization: Bearer <access_token>`.
+
+### GET `/api/admin/orders`
+
+Returns paginated orders for admin order management.
+
+Query params:
+
+| Param | Type | Required | Description |
+| --- | --- | --- | --- |
+| `page` | number | No | Page number. Default: `1`. |
+| `limit` | number | No | Items per page. Default: `20`, max: `100`. |
+| `search` | string | No | Searches by order number, customer name, or customer phone. |
+| `status` | string | No | Filter by order status: `new`, `confirmed`, `processing`, `shipped`, `delivered`, `returned`, `cancelled`. |
+
+Example:
+
+```http
+GET /api/admin/orders?page=1&limit=20&search=ahmed&status=new
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 12,
+      "orderNumber": "ORD-1710000000000000000",
+      "createdAt": "2026-05-10T10:00:00Z",
+      "customerName": "Ahmed",
+      "customerPhone": "+966500000000",
+      "addressCity": "Riyadh",
+      "total": 108,
+      "paymentMethod": "COD",
+      "status": "new",
+      "confidence": 0,
+      "risk": 0
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "total": 1,
+    "totalPages": 1
+  }
+}
+```
+
+### GET `/api/admin/orders/:id`
+
+Returns full order details with order items.
+
+Response:
+
+```json
+{
+  "data": {
+    "id": 12,
+    "order_number": "ORD-1710000000000000000",
+    "customer_name": "Ahmed",
+    "customer_phone": "+966500000000",
+    "address_city": "Riyadh",
+    "grand_total": 108,
+    "payment_method": "COD",
+    "status": "new",
+    "items": [
+      {
+        "id": 1,
+        "order_id": 12,
+        "product_id": 1,
+        "sku": "P-1001",
+        "title": "Oud Signature",
+        "qty": 1,
+        "unit_price": 120,
+        "line_total": 120
+      }
+    ]
+  }
+}
+```
+
+### PATCH `/api/admin/orders/:id`
+
+Updates order fields, typically `status`, `payment_status`, `notes`, `tags`, or risk fields.
+
+Request:
+
+```json
+{
+  "status": "confirmed",
+  "notes": "Customer confirmed by phone"
+}
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "id": "12"
+  }
+}
+```
+
 ## Common Error Shape
 
 Errors return JSON with an `error` string.

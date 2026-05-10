@@ -224,6 +224,47 @@
           }
         }
       ]
+    },
+    {
+      "name": "Admin Orders",
+      "item": [
+        {
+          "name": "GET /api/admin/orders",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/orders?page=1&limit=20&search=ahmed&status=new"
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"data\": [\n    {\n      \"id\": 12,\n      \"orderNumber\": \"ORD-1710000000000000000\",\n      \"createdAt\": \"2026-05-10T10:00:00Z\",\n      \"customerName\": \"Ahmed\",\n      \"customerPhone\": \"+966500000000\",\n      \"addressCity\": \"Riyadh\",\n      \"total\": 108,\n      \"paymentMethod\": \"COD\",\n      \"status\": \"new\",\n      \"confidence\": 0,\n      \"risk\": 0\n    }\n  ],\n  \"meta\": {\n    \"page\": 1,\n    \"limit\": 20,\n    \"total\": 1,\n    \"totalPages\": 1\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET /api/admin/orders/:id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/orders/{{orderId}}"
+          }
+        },
+        {
+          "name": "PATCH /api/admin/orders/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"confirmed\",\n  \"notes\": \"Customer confirmed by phone\"\n}" },
+            "url": "{{baseUrl}}/api/admin/orders/{{orderId}}"
+          }
+        }
+      ]
     }
   ]
 }
