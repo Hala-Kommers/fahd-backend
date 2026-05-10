@@ -3,10 +3,11 @@ package ws
 import "time"
 
 type ClientMessage struct {
-	Type    string `json:"type"`
-	Content string `json:"content,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	Token   string `json:"token,omitempty"`
+	Type      string         `json:"type"`
+	Content   string         `json:"content,omitempty"`
+	SessionID string         `json:"session_id,omitempty"`
+	Token     string         `json:"token,omitempty"`
+	Context   map[string]any `json:"context,omitempty"`
 }
 
 type HistoryMessage struct {

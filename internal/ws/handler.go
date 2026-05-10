@@ -25,11 +25,11 @@ type ChatHandler struct {
 	hub           *Hub
 	sessionMgr    *session.Manager
 	db            *gorm.DB
-	msgHandler    func(sessionID string, content string)
+	msgHandler    func(sessionID string, content string, context map[string]any)
 	rateLimiter   func(sessionID string) bool
 }
 
-func NewChatHandler(hub *Hub, sessionMgr *session.Manager, db *gorm.DB, msgHandler func(string, string)) *ChatHandler {
+func NewChatHandler(hub *Hub, sessionMgr *session.Manager, db *gorm.DB, msgHandler func(string, string, map[string]any)) *ChatHandler {
 	return &ChatHandler{
 		hub:        hub,
 		sessionMgr: sessionMgr,
@@ -126,7 +126,7 @@ func (h *ChatHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			}
 			client.Send(ServerMessage{Type: "message_received"})
 			if h.msgHandler != nil {
-				go h.msgHandler(sid, content)
+				go h.msgHandler(sid, content, msg.Context)
 			}
 
 		case "ping":

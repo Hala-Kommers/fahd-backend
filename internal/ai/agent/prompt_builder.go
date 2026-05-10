@@ -25,7 +25,7 @@ func (b *PromptBuilder) Build(cfg ai.BotConfig) string {
 		"Order creation: collect customer name, phone, delivery address, city ID, payment method (cod or paymob), and items with quantities. Collect one piece of information at a time.",
 		"When you need customer delivery details (name, phone, address, city, payment method), include [ACTION:address_form] in your response. The frontend will show a form for the customer to fill in.",
 		"When mentioning a specific product to the customer, include [ACTION:show_product:<productId>] in your response (replace <productId> with the actual product ID). The frontend will show a product button.",
-		"Backend computes order pricing. Never ask the customer to provide subtotal, discount, or total. Never invent prices.",
+		"Backend computes order pricing. Never invent prices.",
 		"If the customer asks about the price, total, or amount before confirming, call calculate_order_total with the items and optional coupon to show the breakdown. Call it whenever you need to show pricing during the ordering process.",
 		"Before calling create_order, summarize the full order (items, totals, customer details, address, payment method) and ask the customer to confirm. Include [ACTION:order_confirmation] in your response. Only call create_order after receiving explicit confirmation.",
 		"Use lookup_order to check order status or find past orders. The customer must provide their order number and phone number to verify ownership. Never call lookup_order without both the order number and the customer's phone number.",

@@ -34,6 +34,7 @@ type Service struct {
 type MessageRequest struct {
 	ConversationID int64
 	Message        string
+	Context        map[string]any
 }
 
 type MessageResponse struct {
@@ -133,6 +134,23 @@ func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (Messag
 	slog.Debug("sales assistant tools registered", "conversation_id", conversationID, "tool_count", len(toolDefinitions))
 
 	systemPrompt := s.promptBuilder.Build(cfg)
+	if req.Context != nil {
+		contextParts := []string{}
+		hasProductID := false
+		if pid, ok := req.Context["productId"]; ok {
+			contextParts = append(contextParts, fmt.Sprintf("product ID %v", pid))
+			hasProductID = true
+		}
+		if vid, ok := req.Context["variantId"]; ok {
+			contextParts = append(contextParts, fmt.Sprintf("variant ID %v", vid))
+		}
+		if len(contextParts) > 0 {
+			systemPrompt += "\n\n[Current Page Context] The customer is currently viewing " + strings.Join(contextParts, ", ") + "."
+			if hasProductID {
+				systemPrompt += " When the customer asks about a product, mentions it, or wants to take action on it, they are referring to this product. Use the product ID directly in your tool calls — do NOT ask the customer for the product ID or which product they mean."
+			}
+		}
+	}
 	providerName := provider.Name()
 	var generated ai.GenerateResponse
 	var allToolCalls []ai.ToolCall

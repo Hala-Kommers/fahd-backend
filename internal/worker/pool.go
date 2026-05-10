@@ -74,6 +74,7 @@ func (p *Pool) process(ctx context.Context, workerID int, msg queue.Message) {
 	resp, err := p.agentSvc.HandleMessage(ctx, agent.MessageRequest{
 		ConversationID: conversationID,
 		Message:        msg.Content,
+		Context:        msg.Context,
 	})
 	if err != nil {
 		slog.Error("worker agent error", "worker_id", workerID, "session_id", sessionID, "error", err)

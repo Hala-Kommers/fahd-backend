@@ -432,6 +432,18 @@ Frontend stores `session_id` and `token` for reconnection.
 { "type": "message", "content": "Do you have oud offers?" }
 ```
 
+With page context (e.g. opened from a product page):
+
+```json
+{
+  "type": "message",
+  "content": "Does it come in blue?",
+  "context": { "productId": 2, "variantId": 2 }
+}
+```
+
+The AI automatically understands the customer is referring to the given product, avoiding the need to repeat product details in the message.
+
 Backend acknowledges immediately:
 ```json
 { "type": "message_received" }
@@ -481,7 +493,7 @@ Frontend sends `{ "type": "ping" }`, backend responds `{ "type": "pong" }`.
 | `init` | none | Create a new anonymous chat session. First message after connecting. |
 | `auth` | `session_id`, `token` | Re-authenticate an existing session after reconnect. |
 | `history` | none | Request conversation message history (most recent first). Must be authenticated first. |
-| `message` | `content` | Send a chat message to the AI assistant. |
+| `message` | `content`, `context` | Send a chat message to the AI assistant. Optional `context` object can include `productId` and `variantId` so the AI knows what the customer is currently viewing. |
 | `ping` | none | Heartbeat keepalive. |
 
 #### Server-to-Client Event Types

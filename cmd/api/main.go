@@ -49,8 +49,8 @@ func main() {
 	sessionMgr := session.NewManager(cfg.JWTSecret, sessionTTL)
 	msgQueue := queue.NewMemoryQueue(cfg.WSQueueSize)
 
-	msgHandler := func(sessionID, content string) {
-		if err := msgQueue.Enqueue(queue.Message{SessionID: sessionID, Content: content}); err != nil {
+	msgHandler := func(sessionID, content string, context map[string]any) {
+		if err := msgQueue.Enqueue(queue.Message{SessionID: sessionID, Content: content, Context: context}); err != nil {
 			slog.Error("enqueue failed", "session_id", sessionID, "error", err)
 			hub.SendToSession(sessionID, ws.ServerMessage{
 				Type:  "ai_error",
