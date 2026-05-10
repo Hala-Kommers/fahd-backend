@@ -298,7 +298,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "customer name, phone, and address are required"})
 		return
 	}
-	if req.PaymentMethod != "COD" && req.PaymentMethod != "Paymob" {
+	if req.PaymentMethod != "cod" && req.PaymentMethod != "paymob" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payment method"})
 		return
 	}

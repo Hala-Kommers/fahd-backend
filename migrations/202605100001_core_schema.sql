@@ -125,7 +125,7 @@ CREATE TABLE IF NOT EXISTS orders (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
     status TEXT NOT NULL CHECK (status IN ('new', 'confirmed', 'processing', 'shipped', 'delivered', 'returned', 'cancelled')),
-    payment_method TEXT NOT NULL CHECK (payment_method IN ('COD', 'Paymob')),
+    payment_method TEXT NOT NULL CHECK (payment_method IN ('cod', 'paymob')),
     payment_status TEXT NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid', 'failed', 'refunded')),
 
     subtotal NUMERIC(12,2) NOT NULL,

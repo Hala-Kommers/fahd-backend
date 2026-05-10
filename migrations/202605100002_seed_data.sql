@@ -69,7 +69,7 @@ SELECT
   '{"botName":"فهد","tone":"friendly_saudi","style":"concise","language":"ar-SA","emojiLevel":"medium"}'::jsonb,
   '{"systemPrompt":"You are Fahd store assistant","allowedSources":["catalog","product_faq","store_policies"]}'::jsonb,
   '{"welcome":"هلا 👋 أبشر..."}'::jsonb,
-  '{"paymentMethodsEnabled":["COD","Paymob"]}'::jsonb
+  '{"paymentMethodsEnabled":["cod","paymob"]}'::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM bot_config);
 
 -- +goose Down
