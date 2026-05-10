@@ -749,6 +749,266 @@ Response:
 }
 ```
 
+## Admin AI & Conversations
+
+All admin AI and conversation endpoints require `Authorization: Bearer <access_token>`.
+
+### GET `/api/admin/ai/stats`
+
+Aggregated AI usage statistics with optional filters and breakdowns.
+
+Query params:
+
+| Param | Type | Required | Description |
+| --- | --- | --- | --- |
+| `from` | string | No | Start date (ISO 8601) to filter message usage. |
+| `to` | string | No | End date (ISO 8601) to filter message usage. |
+| `provider` | string | No | Filter usage by provider name (e.g. `google`). |
+| `model` | string | No | Filter usage by model name (e.g. `gemini-2.0-flash`). |
+
+Response:
+
+```json
+{
+  "data": {
+    "messages": 42,
+    "conversations": 5,
+    "usage": {
+      "promptTokens": 12500,
+      "completionTokens": 3400,
+      "cacheWriteTokens": 0,
+      "cacheReadTokens": 0,
+      "reasoningTokens": 0
+    },
+    "byProvider": [
+      { "provider": "google", "totalMessages": 42, "promptTokens": 12500, "completionTokens": 3400 }
+    ],
+    "byModel": [
+      { "model": "gemini-2.0-flash", "totalMessages": 35, "promptTokens": 10500, "completionTokens": 2800 }
+    ],
+    "byStatus": [
+      { "status": "active", "totalConversations": 3 },
+      { "status": "closed", "totalConversations": 2 }
+    ]
+  }
+}
+```
+
+### GET `/api/admin/ai/tool-calls`
+
+Paginated tool call history across all conversations. Each tool call is expanded into its own entry with parsed arguments and results.
+
+Query params:
+
+| Param | Type | Required | Description |
+| --- | --- | --- | --- |
+| `page` | number | No | Page number. Default: `1`. |
+| `limit` | number | No | Items per page. Default: `50`, max: `200`. |
+| `conversationId` | number | No | Filter by conversation ID. |
+| `toolName` | string | No | Search tool calls by tool name (partial match). |
+| `from` | string | No | Start date (ISO 8601). |
+| `to` | string | No | End date (ISO 8601). |
+
+Example:
+
+```http
+GET /api/admin/ai/tool-calls?page=1&limit=20&toolName=create_order
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "messageId": 15,
+      "conversationId": 3,
+      "toolName": "create_order",
+      "arguments": {
+        "items": [{ "productId": 1, "qty": 1 }],
+        "customerName": "Ahmed",
+        "customerPhone": "+966500000000",
+        "addressRaw": "Riyadh, Al Malqa",
+        "cityId": 1,
+        "paymentMethod": "cod"
+      },
+      "toolResult": "{\"orderId\":12,\"orderNumber\":\"ORD-1710000000000000000\",\"status\":\"new\",...}",
+      "role": "assistant",
+      "createdAt": "2026-05-10T10:00:00Z"
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "total": 1,
+    "totalPages": 1
+  }
+}
+```
+
+### GET `/api/admin/conversations`
+
+Paginated list of conversations with last message, message count, and token usage.
+
+Query params:
+
+| Param | Type | Required | Description |
+| --- | --- | --- | --- |
+| `page` | number | No | Page number. Default: `1`. |
+| `limit` | number | No | Items per page. Default: `20`, max: `100`. |
+| `status` | string | No | Filter by `active` or `closed`. |
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "status": "active",
+      "customerName": "Ahmed",
+      "customerPhone": "+966500000000",
+      "createdAt": "2026-05-10T10:00:00Z",
+      "updatedAt": "2026-05-10T10:05:00Z",
+      "messageCount": 5,
+      "lastMessage": "Yes, we have Oud Signature for 120 SAR.",
+      "lastMessageRole": "assistant",
+      "totalPromptTokens": 2500,
+      "totalCompletionTokens": 800
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "total": 5,
+    "totalPages": 1
+  }
+}
+```
+
+### GET `/api/admin/conversations/:id`
+
+Returns full conversation details with all messages including tool calls, tool results, token usage, provider, and model.
+
+Path params:
+
+| Param | Type | Description |
+| --- | --- | --- |
+| `id` | number | Conversation ID. |
+
+Response:
+
+```json
+{
+  "data": {
+    "id": 1,
+    "status": "active",
+    "customer_name": "Ahmed",
+    "customer_phone": "+966500000000",
+    "created_at": "2026-05-10T10:00:00Z",
+    "updated_at": "2026-05-10T10:05:00Z",
+    "messages": [
+      {
+        "id": 1,
+        "role": "user",
+        "content": "Do you have oud offers?",
+        "toolCalls": null,
+        "toolResults": null,
+        "usagePromptTokens": 0,
+        "usageCompletionTokens": 0,
+        "usageCacheWriteTokens": 0,
+        "usageCacheReadTokens": 0,
+        "usageReasoningTokens": 0,
+        "provider": "",
+        "model": "",
+        "createdAt": "2026-05-10T10:00:00Z"
+      },
+      {
+        "id": 2,
+        "role": "assistant",
+        "content": "Yes, we have Oud Signature for 120 SAR.",
+        "toolCalls": "[{\"id\":\"abc123\",\"name\":\"search_products\",\"arguments\":{\"query\":\"oud\"}}]",
+        "toolResults": "[{\"toolCallId\":\"abc123\",\"name\":\"search_products\",\"content\":\"{\\\"data\\\":[...]}\"}]",
+        "usagePromptTokens": 500,
+        "usageCompletionTokens": 150,
+        "usageCacheWriteTokens": 0,
+        "usageCacheReadTokens": 0,
+        "usageReasoningTokens": 0,
+        "provider": "google",
+        "model": "gemini-2.0-flash",
+        "createdAt": "2026-05-10T10:00:01Z"
+      }
+    ]
+  }
+}
+```
+
+### GET `/api/admin/conversations/:id/messages`
+
+Paginated message history for a specific conversation.
+
+Path params:
+
+| Param | Type | Description |
+| --- | --- | --- |
+| `id` | number | Conversation ID. |
+
+Query params:
+
+| Param | Type | Required | Description |
+| --- | --- | --- | --- |
+| `page` | number | No | Page number. Default: `1`. |
+| `limit` | number | No | Items per page. Default: `50`, max: `200`. |
+| `role` | string | No | Filter by message role (`user`, `assistant`, `tool`). |
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "role": "user",
+      "content": "Do you have oud offers?",
+      "toolCalls": null,
+      "toolResults": null,
+      "usagePromptTokens": 0,
+      "usageCompletionTokens": 0,
+      "provider": "",
+      "model": "",
+      "createdAt": "2026-05-10T10:00:00Z"
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 50,
+    "total": 5,
+    "totalPages": 1
+  }
+}
+```
+
+### POST `/api/admin/conversations/:id/close`
+
+Closes a conversation (sets status to `closed`).
+
+Path params:
+
+| Param | Type | Description |
+| --- | --- | --- |
+| `id` | number | Conversation ID. |
+
+Response:
+
+```json
+{
+  "data": {
+    "id": "1",
+    "status": "closed"
+  }
+}
+```
+
 ## Common Error Shape
 
 Errors return JSON with an `error` string.

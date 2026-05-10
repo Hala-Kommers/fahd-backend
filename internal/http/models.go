@@ -105,7 +105,38 @@ type Order struct {
 }
 
 type Conversation struct {
-	ID        int64     `gorm:"primaryKey" json:"id"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID            int64      `gorm:"primaryKey" json:"id"`
+	UserID        *int64     `json:"userId"`
+	Title         string     `json:"title"`
+	CustomerName  *string    `json:"customerName"`
+	CustomerPhone *string    `json:"customerPhone"`
+	Channel       string     `json:"channel"`
+	Status        string     `json:"status"`
+	Sentiment     *string    `json:"sentiment"`
+	Summary       *string    `json:"summary"`
+	LastMessageAt *time.Time `json:"lastMessageAt"`
+	MetaJSON      []byte     `json:"-"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+}
+
+type Message struct {
+	ID                    int64     `gorm:"primaryKey" json:"id"`
+	ConversationID        int64     `json:"conversationId"`
+	Sender                string    `json:"sender"`
+	Role                  string    `json:"role"`
+	Text                  string    `json:"text"`
+	Content               string    `json:"content"`
+	ToolCalls             []byte    `json:"-"`
+	ToolResults           []byte    `json:"-"`
+	UsagePromptTokens     int       `json:"usagePromptTokens"`
+	UsageCompletionTokens int       `json:"usageCompletionTokens"`
+	UsageCacheWriteTokens int       `json:"usageCacheWriteTokens"`
+	UsageCacheReadTokens  int       `json:"usageCacheReadTokens"`
+	UsageReasoningTokens  int       `json:"usageReasoningTokens"`
+	Provider              string    `json:"provider"`
+	Model                 string    `json:"model"`
+	Metadata              []byte    `json:"-"`
+	TokensUsed            int       `json:"tokensUsed"`
+	CreatedAt             time.Time `json:"createdAt"`
 }
