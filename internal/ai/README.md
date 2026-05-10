@@ -24,6 +24,19 @@ Implemented:
 
 - `google` / `gemini`
 
+## Product Tools
+
+Implemented provider-agnostic tools:
+
+- `search_products`
+- `get_product_details`
+- `compare_products`
+- `resolve_variant`
+
+These tools call `internal/ai/services.ProductService`, not provider-specific code. The registry lives in `internal/ai/tools`.
+
+The agent request includes tool definitions and the runtime executes provider-requested tool calls in a loop. Product variants are available through `get_product_details`, and selected variant resolution is available through `resolve_variant`.
+
 Planned:
 
 - `openai`

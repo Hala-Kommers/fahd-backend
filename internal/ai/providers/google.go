@@ -48,6 +48,7 @@ func (p *GoogleProvider) Generate(ctx context.Context, req ai.GenerateRequest) (
 	payload := googleGenerateRequest{
 		SystemInstruction: googleSystemInstruction(req.SystemPrompt),
 		Contents:          googleContents(req.Messages),
+		Tools:             googleTools(req.Tools),
 		GenerationConfig: googleGenerationConfig{
 			Temperature:     req.Temperature,
 			MaxOutputTokens: req.MaxTokens,
@@ -85,7 +86,8 @@ func (p *GoogleProvider) Generate(ctx context.Context, req ai.GenerateRequest) (
 		return ai.GenerateResponse{}, fmt.Errorf("decode google response: %w", err)
 	}
 
-	return ai.GenerateResponse{Content: parsed.Text(), Raw: parsed}, nil
+	usage := parseUsage(parsed.UsageMetadata)
+	return ai.GenerateResponse{Content: parsed.Text(), ToolCalls: parsed.ToolCalls(), Usage: usage, Raw: parsed}, nil
 }
 
 func googleProviderError(statusCode int, body []byte) error {
@@ -125,7 +127,18 @@ func googleProviderError(statusCode int, body []byte) error {
 type googleGenerateRequest struct {
 	SystemInstruction googleContent          `json:"systemInstruction,omitempty"`
 	Contents          []googleContent        `json:"contents"`
+	Tools             []googleTool           `json:"tools,omitempty"`
 	GenerationConfig  googleGenerationConfig `json:"generationConfig,omitempty"`
+}
+
+type googleTool struct {
+	FunctionDeclarations []googleFunctionDeclaration `json:"functionDeclarations"`
+}
+
+type googleFunctionDeclaration struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
 }
 
 type googleGenerationConfig struct {
@@ -139,20 +152,61 @@ type googleContent struct {
 }
 
 type googlePart struct {
-	Text string `json:"text"`
+	Text             string                  `json:"text,omitempty"`
+	FunctionCall     *googleFunctionCall     `json:"functionCall,omitempty"`
+	FunctionResponse *googleFunctionResponse `json:"functionResponse,omitempty"`
+}
+
+type googleFunctionCall struct {
+	Name string         `json:"name"`
+	Args map[string]any `json:"args"`
+}
+
+type googleFunctionResponse struct {
+	Name     string         `json:"name"`
+	Response map[string]any `json:"response"`
+}
+
+type googleUsageMetadata struct {
+	PromptTokenCount     int `json:"promptTokenCount"`
+	CandidatesTokenCount int `json:"candidatesTokenCount"`
 }
 
 type googleGenerateResponse struct {
-	Candidates []struct {
+	Candidates    []struct {
 		Content googleContent `json:"content"`
 	} `json:"candidates"`
+	UsageMetadata *googleUsageMetadata `json:"usageMetadata,omitempty"`
 }
 
 func (r googleGenerateResponse) Text() string {
 	if len(r.Candidates) == 0 || len(r.Candidates[0].Content.Parts) == 0 {
 		return ""
 	}
-	return r.Candidates[0].Content.Parts[0].Text
+	for _, part := range r.Candidates[0].Content.Parts {
+		if part.Text != "" {
+			return part.Text
+		}
+	}
+	return ""
+}
+
+func (r googleGenerateResponse) ToolCalls() []ai.ToolCall {
+	if len(r.Candidates) == 0 {
+		return nil
+	}
+	calls := []ai.ToolCall{}
+	for i, part := range r.Candidates[0].Content.Parts {
+		if part.FunctionCall == nil {
+			continue
+		}
+		calls = append(calls, ai.ToolCall{
+			ID:        fmt.Sprintf("google_tool_call_%d", i+1),
+			Name:      part.FunctionCall.Name,
+			Arguments: part.FunctionCall.Args,
+		})
+	}
+	return calls
 }
 
 func googleSystemInstruction(prompt string) googleContent {
@@ -163,19 +217,126 @@ func googleSystemInstruction(prompt string) googleContent {
 }
 
 func googleContents(messages []ai.Message) []googleContent {
-	contents := make([]googleContent, 0, len(messages))
+	contents := make([]googleContent, 0, len(messages)*3)
 	for _, message := range messages {
-		if message.Content == "" || message.Role == ai.RoleSystem {
+		if message.Content == "" && len(message.ToolCalls) == 0 || message.Role == ai.RoleSystem {
 			continue
 		}
-		role := "user"
-		if message.Role == ai.RoleAssistant {
-			role = "model"
+		switch message.Role {
+		case ai.RoleTool:
+			name := "tool_result"
+			if rawName, ok := message.Metadata["name"].(string); ok && rawName != "" {
+				name = rawName
+			}
+			var responseData map[string]any
+			if err := json.Unmarshal([]byte(message.Content), &responseData); err != nil || responseData == nil {
+				responseData = map[string]any{"result": message.Content}
+			}
+			contents = append(contents, googleContent{
+				Role:  "function",
+				Parts: []googlePart{{
+					FunctionResponse: &googleFunctionResponse{
+						Name:     name,
+						Response: responseData,
+					},
+				}},
+			})
+		case ai.RoleAssistant:
+			// Compact format: message may bundle tool_calls + tool_results + final text
+			if len(message.ToolCalls) > 0 {
+				parts := make([]googlePart, 0, len(message.ToolCalls))
+				for _, tc := range message.ToolCalls {
+					parts = append(parts, googlePart{
+						FunctionCall: &googleFunctionCall{Name: tc.Name, Args: tc.Arguments},
+					})
+				}
+				contents = append(contents, googleContent{Role: "model", Parts: parts})
+
+				if results, ok := message.Metadata["tool_results"].([]ai.ToolResult); ok && len(results) > 0 {
+					for _, r := range results {
+						var responseData map[string]any
+						if err := json.Unmarshal([]byte(r.Content), &responseData); err != nil || responseData == nil {
+							responseData = map[string]any{"result": r.Content}
+						}
+						contents = append(contents, googleContent{
+							Role: "function",
+							Parts: []googlePart{{
+								FunctionResponse: &googleFunctionResponse{
+									Name:     r.Name,
+									Response: responseData,
+								},
+							}},
+						})
+					}
+				}
+			}
+			// Emit text part (even without tool_calls for plain assistant replies)
+			if message.Content != "" {
+				contents = append(contents, googleContent{Role: "model", Parts: []googlePart{{Text: message.Content}}})
+			}
+		default:
+			if message.Content == "" {
+				continue
+			}
+			contents = append(contents, googleContent{
+				Role:  "user",
+				Parts: []googlePart{{Text: message.Content}},
+			})
 		}
-		contents = append(contents, googleContent{
-			Role:  role,
-			Parts: []googlePart{{Text: message.Content}},
-		})
 	}
 	return contents
+}
+
+func googleTools(definitions []ai.ToolDefinition) []googleTool {
+	if len(definitions) == 0 {
+		return nil
+	}
+	declarations := make([]googleFunctionDeclaration, 0, len(definitions))
+	for _, definition := range definitions {
+		declarations = append(declarations, googleFunctionDeclaration{
+			Name:        definition.Name,
+			Description: definition.Description,
+			Parameters:  googleSchema(definition.Parameters),
+		})
+	}
+	return []googleTool{{FunctionDeclarations: declarations}}
+}
+
+func googleSchema(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	return sanitizeGoogleSchema(schema).(map[string]any)
+}
+
+func parseUsage(m *googleUsageMetadata) *ai.Usage {
+	if m == nil {
+		return nil
+	}
+	return &ai.Usage{
+		PromptTokens:     m.PromptTokenCount,
+		CompletionTokens: m.CandidatesTokenCount,
+	}
+}
+
+func sanitizeGoogleSchema(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		cleaned := map[string]any{}
+		for key, item := range v {
+			if key == "additionalProperties" {
+				continue
+			}
+			cleaned[key] = sanitizeGoogleSchema(item)
+		}
+		return cleaned
+	case []any:
+		items := make([]any, 0, len(v))
+		for _, item := range v {
+			items = append(items, sanitizeGoogleSchema(item))
+		}
+		return items
+	default:
+		return value
+	}
 }

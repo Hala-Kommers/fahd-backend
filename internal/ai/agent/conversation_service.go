@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"fahd-backend/internal/ai"
@@ -44,10 +45,43 @@ func (s *ConversationService) SaveMessage(ctx context.Context, conversationID in
 	if err := s.db.WithContext(ctx).Table("messages").Create(&row).Error; err != nil {
 		return fmt.Errorf("save message: %w", err)
 	}
-	_ = s.db.WithContext(ctx).Table("conversations").Where("id = ?", conversationID).Updates(map[string]any{
-		"last_message_at": gorm.Expr("NOW()"),
-		"updated_at":       gorm.Expr("NOW()"),
-	}).Error
+	s.touchConversation(ctx, conversationID)
+	return nil
+}
+
+func (s *ConversationService) SaveAssistantMessage(ctx context.Context, conversationID int64, content string, toolCalls []ai.ToolCall, toolResults []ai.ToolResult, usage *ai.Usage, provider, model string) error {
+	row := map[string]any{
+		"conversation_id": conversationID,
+		"role":            "assistant",
+		"content":         content,
+		"provider":        provider,
+		"model":           model,
+	}
+	if len(toolCalls) > 0 {
+		encoded, _ := json.Marshal(toolCalls)
+		row["tool_calls"] = string(encoded)
+	}
+	if len(toolResults) > 0 {
+		encoded, _ := json.Marshal(toolResults)
+		row["tool_results"] = string(encoded)
+	}
+	if usage != nil {
+		row["usage_prompt_tokens"] = usage.PromptTokens
+		row["usage_completion_tokens"] = usage.CompletionTokens
+		if usage.CacheWriteTokens > 0 {
+			row["usage_cache_write_tokens"] = usage.CacheWriteTokens
+		}
+		if usage.CacheReadTokens > 0 {
+			row["usage_cache_read_tokens"] = usage.CacheReadTokens
+		}
+		if usage.ReasoningTokens > 0 {
+			row["usage_reasoning_tokens"] = usage.ReasoningTokens
+		}
+	}
+	if err := s.db.WithContext(ctx).Table("messages").Create(&row).Error; err != nil {
+		return fmt.Errorf("save assistant message: %w", err)
+	}
+	s.touchConversation(ctx, conversationID)
 	return nil
 }
 
@@ -56,27 +90,54 @@ func (s *ConversationService) RecentMessages(ctx context.Context, conversationID
 		limit = 20
 	}
 
-	var rows []struct {
-		Role    string
-		Content string
+	type messageRow struct {
+		Role        string
+		Content     string
+		ToolCalls   *string
+		ToolResults *string
 	}
-	err := s.db.WithContext(ctx).Table("messages").
-		Select("role, content").
+	var rows []messageRow
+	if err := s.db.WithContext(ctx).Table("messages").
+		Select("role, content, tool_calls, tool_results").
 		Where("conversation_id = ? AND content IS NOT NULL", conversationID).
-		Order("created_at DESC").
+		Order("created_at ASC").
 		Limit(limit).
-		Find(&rows).Error
-	if err != nil {
+		Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("load messages: %w", err)
 	}
 
 	messages := make([]ai.Message, 0, len(rows))
-	for i := len(rows) - 1; i >= 0; i-- {
-		role := ai.Role(rows[i].Role)
+	for _, row := range rows {
+		role := ai.Role(row.Role)
 		if role == "" {
 			role = ai.RoleUser
 		}
-		messages = append(messages, ai.Message{Role: role, Content: rows[i].Content})
+		msg := ai.Message{Role: role, Content: row.Content}
+
+		if row.ToolCalls != nil {
+			var calls []ai.ToolCall
+			if err := json.Unmarshal([]byte(*row.ToolCalls), &calls); err == nil {
+				msg.ToolCalls = calls
+			}
+		}
+		if row.ToolResults != nil {
+			var results []ai.ToolResult
+			if err := json.Unmarshal([]byte(*row.ToolResults), &results); err == nil && len(results) > 0 {
+				if msg.Metadata == nil {
+					msg.Metadata = map[string]any{}
+				}
+				msg.Metadata["tool_results"] = results
+			}
+		}
+
+		messages = append(messages, msg)
 	}
 	return messages, nil
+}
+
+func (s *ConversationService) touchConversation(ctx context.Context, conversationID int64) {
+	_ = s.db.WithContext(ctx).Table("conversations").Where("id = ?", conversationID).Updates(map[string]any{
+		"last_message_at": gorm.Expr("NOW()"),
+		"updated_at":      gorm.Expr("NOW()"),
+	}).Error
 }

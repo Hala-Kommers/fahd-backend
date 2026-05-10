@@ -15,6 +15,7 @@ type Message struct {
 	Role       Role           `json:"role"`
 	Content    string         `json:"content"`
 	ToolCallID string         `json:"toolCallId,omitempty"`
+	ToolCalls  []ToolCall     `json:"toolCalls,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
@@ -50,9 +51,18 @@ type GenerateRequest struct {
 	MaxTokens    int              `json:"maxTokens"`
 }
 
+type Usage struct {
+	PromptTokens     int `json:"promptTokens"`
+	CompletionTokens int `json:"completionTokens"`
+	CacheWriteTokens int `json:"cacheWriteTokens"`
+	CacheReadTokens  int `json:"cacheReadTokens"`
+	ReasoningTokens  int `json:"reasoningTokens"`
+}
+
 type GenerateResponse struct {
 	Content   string     `json:"content"`
 	ToolCalls []ToolCall `json:"toolCalls,omitempty"`
+	Usage     *Usage     `json:"usage,omitempty"`
 	Raw       any        `json:"-"`
 }
 
