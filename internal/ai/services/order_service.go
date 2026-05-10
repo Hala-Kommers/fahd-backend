@@ -247,6 +247,127 @@ func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[
 	}, nil
 }
 
+func (s *OrderService) CalculateTotal(ctx context.Context, input CreateOrderInput) (map[string]any, error) {
+	if len(input.Items) == 0 {
+		return nil, fmt.Errorf("items are required")
+	}
+
+	type pricedItem struct {
+		ProductID int64
+		VariantID *int64
+		Title     string
+		SKU       string
+		Qty       int
+		UnitPrice float64
+		LineTotal float64
+	}
+	pricedItems := make([]pricedItem, 0, len(input.Items))
+	subtotal := 0.0
+
+	for _, item := range input.Items {
+		if item.ProductID <= 0 || item.Qty <= 0 {
+			return nil, fmt.Errorf("each item must include valid productId and qty")
+		}
+		var product struct {
+			ID    int64
+			Title string
+			SKU   string
+			Price float64
+		}
+		if err := s.db.WithContext(ctx).Table("products").
+			Select("id, title, sku, price").
+			Where("id = ? AND status = ?", item.ProductID, "active").
+			First(&product).Error; err != nil {
+			return nil, fmt.Errorf("invalid product: %d", item.ProductID)
+		}
+		unitPrice := product.Price
+		if item.VariantID != nil {
+			var variant struct {
+				ID            int64
+				PriceOverride *float64
+			}
+			if err := s.db.WithContext(ctx).Table("product_variants").
+				Select("id, price_override").
+				Where("id = ? AND product_id = ? AND is_active = TRUE", *item.VariantID, item.ProductID).
+				First(&variant).Error; err != nil {
+				return nil, fmt.Errorf("invalid variant for product: %d", item.ProductID)
+			}
+			if variant.PriceOverride != nil {
+				unitPrice = *variant.PriceOverride
+			}
+		}
+		lineTotal := roundMoney(unitPrice * float64(item.Qty))
+		subtotal += lineTotal
+		pricedItems = append(pricedItems, pricedItem{
+			ProductID: item.ProductID,
+			VariantID: item.VariantID,
+			Title:     product.Title,
+			SKU:       product.SKU,
+			Qty:       item.Qty,
+			UnitPrice: roundMoney(unitPrice),
+			LineTotal: lineTotal,
+		})
+	}
+
+	subtotal = roundMoney(subtotal)
+	shipping := 0.0
+	discount := 0.0
+
+	if code := strings.TrimSpace(input.CouponCode); code != "" {
+		var coupon struct {
+			Type      string
+			Value     float64
+			MinOrder  *float64
+			ExpiresAt *time.Time
+		}
+		if err := s.db.WithContext(ctx).Table("coupons").
+			Select("type, value, min_order, expires_at").
+			Where("LOWER(code) = LOWER(?) AND is_active = TRUE", code).
+			First(&coupon).Error; err == nil {
+			valid := true
+			if coupon.ExpiresAt != nil && coupon.ExpiresAt.Before(time.Now()) {
+				valid = false
+			}
+			if coupon.MinOrder != nil && subtotal < *coupon.MinOrder {
+				valid = false
+			}
+			if valid {
+				if coupon.Type == "percentage" {
+					discount = roundMoney((subtotal * coupon.Value) / 100)
+				} else {
+					discount = roundMoney(coupon.Value)
+				}
+			}
+		}
+	}
+	if discount > subtotal {
+		discount = subtotal
+	}
+	grandTotal := roundMoney(subtotal + shipping - discount)
+
+	itemsJSON := make([]map[string]any, 0, len(pricedItems))
+	for _, item := range pricedItems {
+		itemsJSON = append(itemsJSON, map[string]any{
+			"productId": item.ProductID,
+			"title":     item.Title,
+			"sku":       item.SKU,
+			"qty":       item.Qty,
+			"unitPrice": item.UnitPrice,
+			"lineTotal": item.LineTotal,
+		})
+	}
+
+	return map[string]any{
+		"items":      itemsJSON,
+		"subtotal":   subtotal,
+		"shipping":   shipping,
+		"discount":   discount,
+		"grandTotal": grandTotal,
+		"currency":   "SAR",
+		"couponCode": strings.TrimSpace(input.CouponCode),
+	}, nil
+}
+
 func (s *OrderService) Lookup(ctx context.Context, orderID int64, orderNumber string, customerPhone string) (map[string]any, error) {
 	db := s.db.WithContext(ctx).Table("orders")
 	if orderID > 0 {

@@ -24,6 +24,7 @@ func (b *PromptBuilder) Build(cfg ai.BotConfig) string {
 		"Use concise, helpful language and ask one clear follow-up question when required information is missing.",
 		"Order creation: collect customer name, phone, delivery address, city ID, payment method (cod or paymob), and items with quantities. Collect one piece of information at a time.",
 		"Backend computes order pricing. Never ask the customer to provide subtotal, discount, or total. Never invent prices.",
+		"If the customer asks about the price, total, or amount before confirming, call calculate_order_total with the items and optional coupon to show the breakdown. Call it whenever you need to show pricing during the ordering process.",
 		"Before calling create_order, summarize the full order (items, totals, customer details, address, payment method) and ask the customer to confirm. Only call create_order after receiving explicit confirmation.",
 		"Use lookup_order to check order status or find past orders. The customer must provide their order number and phone number to verify ownership. Never call lookup_order without both the order number and the customer's phone number.",
 	}

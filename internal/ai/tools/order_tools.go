@@ -80,6 +80,65 @@ func (t *CreateOrderTool) Execute(ctx context.Context, arguments map[string]any)
 	return ai.ToolResult{Name: t.Definition().Name, Content: content, Data: data}, err
 }
 
+type CalculateOrderTotalTool struct {
+	orders *services.OrderService
+}
+
+func NewCalculateOrderTotalTool(orders *services.OrderService) *CalculateOrderTotalTool {
+	return &CalculateOrderTotalTool{orders: orders}
+}
+
+func (t *CalculateOrderTotalTool) Definition() ai.ToolDefinition {
+	return ai.ToolDefinition{
+		Name:        "calculate_order_total",
+		Description: "Calculate the order total (subtotal, discount, grand total) before creating the order. Use this when the customer asks about the price, total, or amount before confirming the order. Does not create the order.",
+		Parameters: map[string]any{
+			"type":     "object",
+			"required": []string{"items"},
+			"properties": map[string]any{
+				"items": map[string]any{
+					"type":        "array",
+					"description": "Order items. Each item must have a productId and qty; optionally a variantId.",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"productId": map[string]any{"type": "integer", "description": "Product ID."},
+							"variantId": map[string]any{"type": "integer", "description": "Optional variant ID."},
+							"qty":       map[string]any{"type": "integer", "description": "Quantity."},
+						},
+						"required": []string{"productId", "qty"},
+					},
+				},
+				"couponCode": map[string]any{"type": "string", "description": "Optional coupon code to apply."},
+			},
+		},
+	}
+}
+
+func (t *CalculateOrderTotalTool) Execute(ctx context.Context, arguments map[string]any) (ai.ToolResult, error) {
+	itemsRaw, ok := arguments["items"].([]any)
+	if !ok || len(itemsRaw) == 0 {
+		return ai.ToolResult{}, fmt.Errorf("items array is required")
+	}
+	itemsJSON, _ := json.Marshal(itemsRaw)
+	var items []services.OrderItemInput
+	if err := json.Unmarshal(itemsJSON, &items); err != nil {
+		return ai.ToolResult{}, fmt.Errorf("invalid items: %w", err)
+	}
+
+	input := services.CreateOrderInput{
+		Items:      items,
+		CouponCode: stringArg(arguments, "couponCode"),
+	}
+
+	data, err := t.orders.CalculateTotal(ctx, input)
+	if err != nil {
+		return ai.ToolResult{}, err
+	}
+	content, err := jsonContent(data)
+	return ai.ToolResult{Name: t.Definition().Name, Content: content, Data: data}, err
+}
+
 type LookupOrderTool struct {
 	orders *services.OrderService
 }
