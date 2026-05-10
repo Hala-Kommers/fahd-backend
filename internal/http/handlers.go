@@ -2,17 +2,13 @@ package http
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"fahd-backend/internal/ai"
-	aiagent "fahd-backend/internal/ai/agent"
 	"fahd-backend/internal/config"
 
 	"github.com/gin-gonic/gin"
@@ -545,46 +541,4 @@ func (h *Handler) GetOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": order})
 }
 
-func (h *Handler) StartChat(c *gin.Context) {
-	conversation := Conversation{Status: "active"}
-	if err := h.db.Create(&conversation).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start conversation"})
-		return
-	}
-	c.JSON(http.StatusCreated, gin.H{"data": gin.H{"conversationId": conversation.ID}})
-}
 
-type chatMessageRequest struct {
-	ConversationID int64  `json:"conversationId"`
-	Message        string `json:"message"`
-}
-
-func (h *Handler) SendChatMessage(c *gin.Context) {
-	var req chatMessageRequest
-	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Message) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid chat payload"})
-		return
-	}
-
-	service := aiagent.NewService(h.db, h.cfg)
-	response, err := service.HandleMessage(c.Request.Context(), aiagent.MessageRequest{
-		ConversationID: req.ConversationID,
-		Message:        req.Message,
-	})
-	if err != nil {
-		attrs := []any{"conversation_id", req.ConversationID, "error", err}
-		message := "sales assistant is temporarily unavailable"
-		var providerErr ai.ProviderError
-		if errors.As(err, &providerErr) {
-			attrs = append(attrs, "provider", providerErr.Provider, "provider_error_code", providerErr.Code, "status_code", providerErr.StatusCode)
-			if providerErr.Code == ai.ErrorCodeProviderQuota || providerErr.Code == ai.ErrorCodeProviderRate {
-				message = "sales assistant is temporarily busy. please try again later"
-			}
-		}
-		slog.Error("sales assistant message failed", attrs...)
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": message})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"data": response})
-}

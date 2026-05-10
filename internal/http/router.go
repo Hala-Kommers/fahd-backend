@@ -41,8 +41,6 @@ func NewRouter(cfg config.Config, db *gorm.DB, wsHandler http.Handler) *gin.Engi
 	api.POST("/coupons/validate", handler.ValidateCoupon)
 	api.POST("/orders", handler.CreateOrder)
 	api.GET("/orders/:id", handler.GetOrder)
-	api.POST("/chat/start", handler.StartChat)
-	api.POST("/chat/message", handler.SendChatMessage)
 	api.GET("/ws/chat", func(c *gin.Context) {
 		handler.wsHandler.ServeHTTP(c.Writer, c.Request)
 	})

@@ -399,119 +399,9 @@ Response:
 }
 ```
 
-### POST `/api/chat/start`
-
-Starts a conversation.
-
-Response:
-
-```json
-{
-  "data": {
-    "conversationId": 1
-  }
-}
-```
-
-### POST `/api/chat/message`
-
-Sends a message to the AI sales assistant. If `conversationId` is omitted or invalid, the backend creates a new conversation.
-
-Body:
-
-```json
-{
-  "conversationId": 1,
-  "message": "Do you have oud offers?"
-}
-```
-
-Body fields:
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `conversationId` | number | No | Existing conversation ID. Omit to start a new conversation. |
-| `message` | string | Yes | Customer message. |
-
-Response fields:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `conversationId` | number | Conversation ID for subsequent messages. |
-| `reply` | string | AI assistant text reply. |
-| `actions` | array | Structured actions for the frontend (see below). |
-| `meta.needsHuman` | boolean | Whether a human agent is needed. |
-| `meta.orderCreated` | boolean | Whether an order was created. |
-| `meta.orderId` | number or null | Created order ID if applicable. |
-
-Action types (each action is an object with `type` and optional `payload`):
-
-| Type | Payload | Description |
-| --- | --- | --- |
-| `address_form` | none | Frontend should display a form for collecting customer name, phone, delivery address, city, and payment method. |
-| `order_confirmation` | none | Frontend should display a confirm order button under the AI message. |
-| `show_product` | `{"productId": 5}` | Frontend should display a button or card linking to the specified product. |
-
-Response with actions example:
-
-```json
-{
-  "data": {
-    "conversationId": 1,
-    "reply": "Please provide your delivery details so I can process your order.",
-    "actions": [
-      { "type": "address_form" }
-    ],
-    "meta": {
-      "needsHuman": false,
-      "orderCreated": false,
-      "orderId": null
-    }
-  }
-}
-```
-
-Response with order confirmation:
-
-```json
-{
-  "data": {
-    "conversationId": 1,
-    "reply": "Here is your order summary: Oud Signature x1 - 120 SAR. Total: 120 SAR. Please confirm to place the order.",
-    "actions": [
-      { "type": "order_confirmation" }
-    ],
-    "meta": {
-      "needsHuman": false,
-      "orderCreated": false,
-      "orderId": null
-    }
-  }
-}
-```
-
-Response with product action:
-
-```json
-{
-  "data": {
-    "conversationId": 1,
-    "reply": "I recommend Oud Signature, our premium oud fragrance for 120 SAR.",
-    "actions": [
-      { "type": "show_product", "payload": { "productId": 1 } }
-    ],
-    "meta": {
-      "needsHuman": false,
-      "orderCreated": false,
-      "orderId": null
-    }
-  }
-}
-```
-
 ### WebSocket `/api/ws/chat`
 
-Real-time chat endpoint using WebSocket protocol. Replaces the synchronous POST `/api/chat/message` for lower latency and streaming responses. The legacy POST endpoints remain available for backward compatibility.
+Real-time chat endpoint using WebSocket protocol for AI sales assistant communication.
 
 #### Protocol
 
@@ -607,6 +497,62 @@ Frontend sends `{ "type": "ping" }`, backend responds `{ "type": "pong" }`.
 | `ai_error` | `error` | AI processing error. |
 | `pong` | none | Heartbeat response. |
 | `error` | `error` | Protocol error (invalid message, rate limit, etc.). |
+
+##### Actions in `ai_done`
+
+The `actions` array in `ai_done` events contains structured objects the frontend should use to render interactive UI elements.
+
+Each action is an object with `type` and optional `payload`:
+
+| Type | Payload | Description |
+| --- | --- | --- |
+| `address_form` | none | Frontend should display a form for collecting customer name, phone, delivery address, city, and payment method. When the user submits the form, send the collected values as a normal `message` to the AI. |
+| `order_confirmation` | none | Frontend should display a confirm order button under the AI message. When the user taps confirm, send an affirmative message (e.g. "confirm order") to the AI. |
+| `show_product` | `{"productId": 5}` | Frontend should display a button or card linking to the specified product. |
+
+`ai_done` example with actions:
+
+```json
+{
+  "type": "ai_done",
+  "actions": [
+    { "type": "address_form" }
+  ],
+  "meta": {
+    "needsHuman": false,
+    "orderCreated": false,
+    "orderId": null
+  }
+}
+```
+
+```json
+{
+  "type": "ai_done",
+  "actions": [
+    { "type": "order_confirmation" }
+  ],
+  "meta": {
+    "needsHuman": false,
+    "orderCreated": false,
+    "orderId": null
+  }
+}
+```
+
+```json
+{
+  "type": "ai_done",
+  "actions": [
+    { "type": "show_product", "payload": { "productId": 1 } }
+  ],
+  "meta": {
+    "needsHuman": false,
+    "orderCreated": false,
+    "orderId": null
+  }
+}
+```
 
 #### Security Notes
 
