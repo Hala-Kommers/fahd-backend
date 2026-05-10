@@ -112,6 +112,18 @@
           "request": { "method": "GET", "url": "{{baseUrl}}/api/categories" }
         },
         {
+          "name": "GET /api/cities",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/cities" },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"data\": [\n    {\n      \"id\": 1,\n      \"name\": \"Riyadh\",\n      \"isActive\": true,\n      \"sortOrder\": 1\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
           "name": "POST /api/coupons/validate",
           "request": {
             "method": "POST",
@@ -130,7 +142,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"paymentMethod\": \"COD\",\n  \"customerName\": \"Ahmed\",\n  \"customerPhone\": \"+966500000000\",\n  \"customerEmail\": \"ahmed@example.com\",\n  \"addressRaw\": \"Riyadh, Al Malqa\",\n  \"addressCity\": \"Riyadh\",\n  \"couponCode\": \"WELCOME10\",\n  \"items\": [\n    {\"productId\": 1, \"qty\": 1}\n  ]\n}"
+              "raw": "{\n  \"paymentMethod\": \"COD\",\n  \"customerName\": \"Ahmed\",\n  \"customerPhone\": \"+966500000000\",\n  \"customerEmail\": \"ahmed@example.com\",\n  \"addressRaw\": \"Riyadh, Al Malqa\",\n  \"cityId\": 1,\n  \"couponCode\": \"WELCOME10\",\n  \"items\": [\n    {\"productId\": 1, \"qty\": 1}\n  ]\n}"
             },
             "url": "{{baseUrl}}/api/orders"
           }

@@ -241,6 +241,15 @@ func (h *Handler) ListCategories(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": categories})
 }
 
+func (h *Handler) ListCities(c *gin.Context) {
+	var cities []City
+	if err := h.db.Where("is_active = TRUE").Order("sort_order ASC, name ASC").Find(&cities).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load cities"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": cities})
+}
+
 type validateCouponRequest struct {
 	Code     string  `json:"code"`
 	Subtotal float64 `json:"subtotal"`
@@ -277,7 +286,7 @@ type createOrderRequest struct {
 	CustomerPhone string             `json:"customerPhone"`
 	CustomerEmail string             `json:"customerEmail"`
 	AddressRaw    string             `json:"addressRaw"`
-	AddressCity   string             `json:"addressCity"`
+	CityID        int64              `json:"cityId"`
 	CouponCode    string             `json:"couponCode"`
 	Items         []createOrderItem  `json:"items"`
 }
@@ -296,6 +305,15 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	}
 	if req.CustomerName == "" || req.CustomerPhone == "" || req.AddressRaw == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "customer name, phone, and address are required"})
+		return
+	}
+	if req.CityID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cityId is required"})
+		return
+	}
+	var city City
+	if err := h.db.Where("id = ? AND is_active = TRUE", req.CityID).First(&city).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cityId"})
 		return
 	}
 	if req.PaymentMethod != "cod" && req.PaymentMethod != "paymob" {
@@ -423,6 +441,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		CustomerName:  req.CustomerName,
 		CustomerPhone: req.CustomerPhone,
 		AddressRaw:    req.AddressRaw,
+		CityID:        &req.CityID,
 	}
 
 	tx := h.db.Begin()
@@ -451,7 +470,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		"customer_phone":    req.CustomerPhone,
 		"customer_email":    strings.TrimSpace(req.CustomerEmail),
 		"address_raw":       req.AddressRaw,
-		"address_city":      strings.TrimSpace(req.AddressCity),
+		"city_id":           req.CityID,
 		"address_confidence": 0,
 	}).Error; err != nil {
 		tx.Rollback()

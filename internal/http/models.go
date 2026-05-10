@@ -9,6 +9,15 @@ type Category struct {
 	Icon string `json:"icon"`
 }
 
+type City struct {
+	ID        int64     `gorm:"primaryKey" json:"id"`
+	Name      string    `json:"name"`
+	IsActive  bool      `json:"isActive"`
+	SortOrder int       `json:"sortOrder"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 type Product struct {
 	ID               int64     `gorm:"primaryKey" json:"id"`
 	Title            string    `json:"title"`
@@ -91,6 +100,7 @@ type Order struct {
 	CustomerName string    `json:"customerName"`
 	CustomerPhone string   `json:"customerPhone"`
 	AddressRaw   string    `json:"addressRaw"`
+	CityID       *int64    `json:"cityId"`
 	CreatedAt    time.Time `json:"createdAt"`
 }
 

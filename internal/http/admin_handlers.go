@@ -516,16 +516,17 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 	}
 
 	var rows []adminOrderListItem
-	q := h.db.Table("orders").
-		Select("id, order_number, created_at, customer_name, customer_phone, address_city, grand_total AS total, payment_method, status, address_confidence, risk_score").
+	q := h.db.Table("orders o").
+		Select("o.id, o.order_number, o.created_at, o.customer_name, o.customer_phone, c.name AS address_city, o.grand_total AS total, o.payment_method, o.status, o.address_confidence, o.risk_score").
+		Joins("LEFT JOIN cities c ON c.id = o.city_id").
 		Order("created_at DESC")
 
 	if status := strings.TrimSpace(c.Query("status")); status != "" {
-		q = q.Where("status = ?", status)
+		q = q.Where("o.status = ?", status)
 	}
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		like := "%" + search + "%"
-		q = q.Where("order_number ILIKE ? OR customer_name ILIKE ? OR customer_phone ILIKE ?", like, like, like)
+		q = q.Where("o.order_number ILIKE ? OR o.customer_name ILIKE ? OR o.customer_phone ILIKE ?", like, like, like)
 	}
 
 	var total int64

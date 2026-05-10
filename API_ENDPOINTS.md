@@ -264,6 +264,25 @@ Response:
 }
 ```
 
+### GET `/api/cities`
+
+Returns active cities for storefront checkout city selection.
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "name": "Riyadh",
+      "isActive": true,
+      "sortOrder": 1
+    }
+  ]
+}
+```
+
 ### POST `/api/coupons/validate`
 
 Validates coupon availability. The `discount` value in the response is the configured coupon value, not the computed monetary discount.
@@ -302,7 +321,7 @@ Body fields:
 | `customerPhone` | string | Yes | Customer phone. |
 | `customerEmail` | string | No | Customer email. |
 | `addressRaw` | string | Yes | Full address text. |
-| `addressCity` | string | No | City name. |
+| `cityId` | number | Yes | Selected city ID from `GET /api/cities`. |
 | `couponCode` | string | No | Coupon code. |
 | `items` | array | Yes | Order items. |
 
@@ -323,7 +342,7 @@ Request:
   "customerPhone": "+966500000000",
   "customerEmail": "ahmed@example.com",
   "addressRaw": "Riyadh, Al Malqa",
-  "addressCity": "Riyadh",
+  "cityId": 1,
   "couponCode": "WELCOME10",
   "items": [
     { "productId": 1, "qty": 1 }

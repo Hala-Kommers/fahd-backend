@@ -37,6 +37,7 @@ func NewRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
 	api.GET("/products", handler.ListProducts)
 	api.GET("/products/:id", handler.GetProduct)
 	api.GET("/categories", handler.ListCategories)
+	api.GET("/cities", handler.ListCities)
 	api.POST("/coupons/validate", handler.ValidateCoupon)
 	api.POST("/orders", handler.CreateOrder)
 	api.GET("/orders/:id", handler.GetOrder)
