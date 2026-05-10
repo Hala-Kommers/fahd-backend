@@ -90,7 +90,15 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/api/products?page=1&limit=12&search=oud&category=perfumes&sort=price_desc"
-          }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "body": "{\n  \"data\": [\n    {\n      \"id\": 1,\n      \"title\": \"Oud Signature\",\n      \"slug\": \"oud-signature\",\n      \"sku\": \"P-1001\",\n      \"status\": \"active\",\n      \"categoryId\": 1,\n      \"categoryName\": \"Perfumes\",\n      \"primaryImage\": \"https://images.unsplash.com/photo-1594035910387-fea47794261f\",\n      \"price\": 120,\n      \"compareAt\": 160,\n      \"currency\": \"SAR\",\n      \"stockTotal\": 50,\n      \"isFeatured\": true,\n      \"salesCount\": 0,\n      \"rating\": 0\n    }\n  ],\n  \"meta\": {\n    \"page\": 1,\n    \"limit\": 12,\n    \"total\": 1,\n    \"totalPages\": 1\n  }\n}"
+            }
+          ]
         },
         {
           "name": "GET /api/products/:id",

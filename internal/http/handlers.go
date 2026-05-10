@@ -28,6 +28,7 @@ type productListItem struct {
 	Status       string   `json:"status"`
 	CategoryID   *int64   `json:"categoryId"`
 	CategoryName *string  `json:"categoryName"`
+	PrimaryImage *string  `json:"primaryImage"`
 	Price        float64  `json:"price"`
 	CompareAt    *float64 `json:"compareAt"`
 	Currency     string   `json:"currency"`
@@ -44,8 +45,9 @@ func NewHandler(db *gorm.DB, cfg config.Config) *Handler {
 func (h *Handler) ListProducts(c *gin.Context) {
 	var products []productListItem
 	query := h.db.Model(&Product{}).
-		Select("products.id, products.title, products.slug, products.sku, products.status, products.category_id, categories.name AS category_name, products.price, products.compare_at, products.currency, products.stock_total, products.is_featured, products.sales_count, products.rating").
+		Select("products.id, products.title, products.slug, products.sku, products.status, products.category_id, categories.name AS category_name, img.url AS primary_image, products.price, products.compare_at, products.currency, products.stock_total, products.is_featured, products.sales_count, products.rating").
 		Joins("LEFT JOIN categories ON categories.id = products.category_id").
+		Joins("LEFT JOIN LATERAL (SELECT url FROM product_images i WHERE i.product_id = products.id ORDER BY i.is_primary DESC, i.sort_order ASC, i.id ASC LIMIT 1) img ON TRUE").
 		Where("status = ?", "active")
 
 	page := 1
