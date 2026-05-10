@@ -509,6 +509,216 @@ Response with product action:
 }
 ```
 
+### WebSocket `/api/ws/chat`
+
+Real-time chat endpoint using WebSocket protocol. Replaces the synchronous POST `/api/chat/message` for lower latency and streaming responses. The legacy POST endpoints remain available for backward compatibility.
+
+#### Protocol
+
+**Connection:** Open a WebSocket to `ws://host:port/api/ws/chat`.
+
+**1. Initialize session (first message):**
+
+Frontend sends:
+```json
+{ "type": "init" }
+```
+
+Backend responds:
+```json
+{
+  "type": "session_created",
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "expires_at": 1710003600
+}
+```
+
+Frontend stores `session_id` and `token` for reconnection.
+
+**2. Send a message:**
+
+```json
+{ "type": "message", "content": "Do you have oud offers?" }
+```
+
+Backend acknowledges immediately:
+```json
+{ "type": "message_received" }
+```
+
+**3. Receive AI response stream:**
+
+```json
+{ "type": "ai_typing" }
+
+{ "type": "ai_chunk", "content": "Yes" }
+{ "type": "ai_chunk", "content": "Yes, we have" }
+{ "type": "ai_chunk", "content": "Yes, we have Oud Signature" }
+{ "type": "ai_chunk", "content": "Yes, we have Oud Signature for 120 SAR." }
+
+{ "type": "ai_done", "actions": [{"type":"show_product","payload":{"productId":1}}], "meta": {"needsHuman":false,"orderCreated":false,"orderId":null} }
+```
+
+**4. Reconnect (after disconnect):**
+
+Frontend reopens WebSocket and sends:
+```json
+{
+  "type": "auth",
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "token": "eyJhbGciOiJIUzI1NiIs..."
+}
+```
+
+Backend validates token signature and responds:
+```json
+{ "type": "auth_ok", "session_id": "550e8400-e29b-41d4-a716-446655440000" }
+```
+or on failure:
+```json
+{ "type": "auth_error", "error": "token validation failed" }
+```
+
+**5. Heartbeat:**
+
+Frontend sends `{ "type": "ping" }`, backend responds `{ "type": "pong" }`.
+
+#### Client-to-Server Message Types
+
+| Type | Fields | Description |
+| --- | --- | --- |
+| `init` | none | Create a new anonymous chat session. First message after connecting. |
+| `auth` | `session_id`, `token` | Re-authenticate an existing session after reconnect. |
+| `message` | `content` | Send a chat message to the AI assistant. |
+| `ping` | none | Heartbeat keepalive. |
+
+#### Server-to-Client Event Types
+
+| Type | Fields | Description |
+| --- | --- | --- |
+| `session_created` | `session_id`, `token`, `expires_at` | New session created after `init`. |
+| `auth_ok` | `session_id` | Session authentication successful. |
+| `auth_error` | `error` | Session authentication failed. |
+| `message_received` | none | Message accepted and queued for processing. |
+| `ai_typing` | none | AI provider is processing the request. |
+| `ai_chunk` | `content` | Incremental AI response text. Each chunk contains the full text so far. |
+| `ai_done` | `actions`, `meta` | AI response complete. Contains any actions and metadata. |
+| `ai_error` | `error` | AI processing error. |
+| `pong` | none | Heartbeat response. |
+| `error` | `error` | Protocol error (invalid message, rate limit, etc.). |
+
+#### Security Notes
+
+- **Session tokens are HMAC SHA256 signed JWTs** using the server's `JWT_SECRET`.
+- A session UUID alone is **not authorization** — the signed token is required.
+- Tokens expire after the configured `SESSION_TTL` (default 1 hour).
+- The frontend must store both `session_id` and `token` and send `auth` on reconnect.
+- Rate limiting is applied per session.
+
+#### Frontend Example (JavaScript)
+
+```javascript
+class ChatClient {
+  constructor(url) {
+    this.url = url;
+    this.sessionId = null;
+    this.token = null;
+    this.ws = null;
+    this.listeners = {};
+  }
+
+  connect() {
+    this.ws = new WebSocket(this.url);
+
+    this.ws.onopen = () => {
+      if (this.sessionId && this.token) {
+        // Reconnect: authenticate existing session
+        this.send({ type: "auth", session_id: this.sessionId, token: this.token });
+      } else {
+        // New session
+        this.send({ type: "init" });
+      }
+    };
+
+    this.ws.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+
+      if (msg.type === "session_created") {
+        this.sessionId = msg.session_id;
+        this.token = msg.token;
+        // Persist in localStorage for reconnection
+        localStorage.setItem("chat_session_id", msg.session_id);
+        localStorage.setItem("chat_token", msg.token);
+      }
+
+      if (msg.type === "auth_ok") {
+        this.sessionId = msg.session_id;
+      }
+
+      const handler = this.listeners[msg.type];
+      if (handler) handler(msg);
+    };
+
+    this.ws.onclose = () => {
+      // Auto-reconnect after 1 second
+      setTimeout(() => this.connect(), 1000);
+    };
+  }
+
+  sendMessage(content) {
+    this.send({ type: "message", content });
+  }
+
+  send(data) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(data));
+    }
+  }
+
+  on(event, callback) {
+    this.listeners[event] = callback;
+  }
+
+  close() {
+    if (this.ws) this.ws.close();
+  }
+}
+
+// Usage
+const client = new ChatClient("ws://localhost:8080/api/ws/chat");
+
+// Restore persisted session
+const savedSession = localStorage.getItem("chat_session_id");
+const savedToken = localStorage.getItem("chat_token");
+if (savedSession && savedToken) {
+  client.sessionId = savedSession;
+  client.token = savedToken;
+}
+
+client.on("ai_chunk", (msg) => {
+  document.getElementById("chat-reply").textContent = msg.content;
+});
+
+client.on("ai_done", (msg) => {
+  console.log("Actions:", msg.actions);
+  console.log("Meta:", msg.meta);
+});
+
+client.on("ai_error", (msg) => {
+  console.error("AI error:", msg.error);
+});
+
+client.on("session_created", (msg) => {
+  console.log("Session:", msg.session_id);
+});
+
+client.connect();
+
+// Send message
+client.sendMessage("Do you have oud offers?");
+```
+
 ## Admin Products
 
 All admin product endpoints require `Authorization: Bearer <access_token>`.

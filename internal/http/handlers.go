@@ -20,8 +20,9 @@ import (
 )
 
 type Handler struct {
-	db  *gorm.DB
-	cfg config.Config
+	db        *gorm.DB
+	cfg       config.Config
+	wsHandler http.Handler
 }
 
 type productListItem struct {
@@ -42,8 +43,8 @@ type productListItem struct {
 	Rating       float64  `json:"rating"`
 }
 
-func NewHandler(db *gorm.DB, cfg config.Config) *Handler {
-	return &Handler{db: db, cfg: cfg}
+func NewHandler(db *gorm.DB, cfg config.Config, wsHandler http.Handler) *Handler {
+	return &Handler{db: db, cfg: cfg, wsHandler: wsHandler}
 }
 
 func (h *Handler) ListProducts(c *gin.Context) {

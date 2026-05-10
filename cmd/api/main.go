@@ -14,6 +14,10 @@ import (
 	"fahd-backend/internal/db"
 	httpserver "fahd-backend/internal/http"
 	"fahd-backend/internal/logger"
+	"fahd-backend/internal/queue"
+	"fahd-backend/internal/session"
+	"fahd-backend/internal/worker"
+	"fahd-backend/internal/ws"
 )
 
 func main() {
@@ -36,12 +40,40 @@ func main() {
 		os.Exit(1)
 	}
 
+	sessionTTL, err := time.ParseDuration(cfg.SessionTTL)
+	if err != nil {
+		sessionTTL = 1 * time.Hour
+	}
+
+	hub := ws.NewHub()
+	sessionMgr := session.NewManager(cfg.JWTSecret, sessionTTL)
+	msgQueue := queue.NewMemoryQueue(cfg.WSQueueSize)
+
+	msgHandler := func(sessionID, content string) {
+		if err := msgQueue.Enqueue(queue.Message{SessionID: sessionID, Content: content}); err != nil {
+			slog.Error("enqueue failed", "session_id", sessionID, "error", err)
+			hub.SendToSession(sessionID, ws.ServerMessage{
+				Type:  "ai_error",
+				Error: "system busy, please try again",
+			})
+		}
+	}
+
+	chatHandler := ws.NewChatHandler(hub, sessionMgr, msgHandler)
+
+	workerPool := worker.NewPool(cfg.WorkerCount, msgQueue, hub, database, cfg, sessionMgr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	workerPool.Start(ctx)
+
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
-		Handler:      httpserver.NewRouter(cfg, database),
+		Handler:      httpserver.NewRouter(cfg, database, http.HandlerFunc(chatHandler.ServeWS)),
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		WriteTimeout: 0,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	go func() {
@@ -56,10 +88,13 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	slog.Info("shutting down...")
+	cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("server shutdown error", "error", err)
 	}
 

@@ -16,6 +16,9 @@ type Config struct {
 	FrontendOrigin string
 	AIProvider     string
 	AIAPIKey       string
+	SessionTTL     string
+	WSQueueSize    int
+	WorkerCount    int
 }
 
 func Load() (Config, error) {
@@ -30,6 +33,9 @@ func Load() (Config, error) {
 		FrontendOrigin: os.Getenv("FRONTEND_ORIGIN"),
 		AIProvider:     os.Getenv("AI_PROVIDER"),
 		AIAPIKey:       os.Getenv("AI_API_KEY"),
+		SessionTTL:     getWithDefault("SESSION_TTL", "1h"),
+		WSQueueSize:    100,
+		WorkerCount:    2,
 	}
 
 	if cfg.DatabaseURL == "" {

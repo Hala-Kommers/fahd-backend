@@ -11,9 +11,9 @@ import (
 	"gorm.io/gorm"
 )
 
-func NewRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
+func NewRouter(cfg config.Config, db *gorm.DB, wsHandler http.Handler) *gin.Engine {
 	router := gin.New()
-	handler := NewHandler(db, cfg)
+	handler := NewHandler(db, cfg, wsHandler)
 
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
@@ -43,6 +43,9 @@ func NewRouter(cfg config.Config, db *gorm.DB) *gin.Engine {
 	api.GET("/orders/:id", handler.GetOrder)
 	api.POST("/chat/start", handler.StartChat)
 	api.POST("/chat/message", handler.SendChatMessage)
+	api.GET("/ws/chat", func(c *gin.Context) {
+		handler.wsHandler.ServeHTTP(c.Writer, c.Request)
+	})
 	api.POST("/auth/login", handler.Login)
 	api.POST("/auth/refresh", handler.Refresh)
 	api.POST("/auth/logout", handler.Logout)
