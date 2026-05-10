@@ -415,7 +415,7 @@ Response:
 
 ### POST `/api/chat/message`
 
-Sends a message to an existing conversation.
+Sends a message to the AI sales assistant. If `conversationId` is omitted or invalid, the backend creates a new conversation.
 
 Body:
 
@@ -426,13 +426,26 @@ Body:
 }
 ```
 
+Body fields:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `conversationId` | number | No | Existing conversation ID. Omit to start a new conversation. |
+| `message` | string | Yes | Customer message. |
+
 Response:
 
 ```json
 {
   "data": {
     "conversationId": 1,
-    "reply": "Thanks for your message. AI replies will be enabled in Phase 7."
+    "reply": "Yes, we have Oud Signature for 120 SAR. Would you like details or help placing an order?",
+    "actions": [],
+    "meta": {
+      "needsHuman": false,
+      "orderCreated": false,
+      "orderId": null
+    }
   }
 }
 ```

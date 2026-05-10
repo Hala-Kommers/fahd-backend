@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"fahd-backend/internal/ai"
@@ -76,7 +77,7 @@ func (p *GoogleProvider) Generate(ctx context.Context, req ai.GenerateRequest) (
 		return ai.GenerateResponse{}, fmt.Errorf("read google response: %w", err)
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return ai.GenerateResponse{}, fmt.Errorf("google response status %d: %s", res.StatusCode, string(resBody))
+		return ai.GenerateResponse{}, googleProviderError(res.StatusCode, resBody)
 	}
 
 	var parsed googleGenerateResponse
@@ -85,6 +86,40 @@ func (p *GoogleProvider) Generate(ctx context.Context, req ai.GenerateRequest) (
 	}
 
 	return ai.GenerateResponse{Content: parsed.Text(), Raw: parsed}, nil
+}
+
+func googleProviderError(statusCode int, body []byte) error {
+	message := string(body)
+	var parsed struct {
+		Error struct {
+			Message string `json:"message"`
+			Status  string `json:"status"`
+			Code    int    `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Error.Message != "" {
+		message = parsed.Error.Message
+	}
+
+	code := ai.ErrorCodeProviderError
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		code = ai.ErrorCodeProviderAuth
+	case http.StatusTooManyRequests:
+		code = ai.ErrorCodeProviderRate
+	}
+
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "quota") || strings.Contains(lower, "exceeded") {
+		code = ai.ErrorCodeProviderQuota
+	}
+
+	return ai.ProviderError{
+		Code:       code,
+		Provider:   "google",
+		StatusCode: statusCode,
+		Message:    message,
+	}
 }
 
 type googleGenerateRequest struct {

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,22 +13,27 @@ import (
 	"fahd-backend/internal/config"
 	"fahd-backend/internal/db"
 	httpserver "fahd-backend/internal/http"
+	"fahd-backend/internal/logger"
 )
 
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("config error: %v", err)
+		slog.Error("config error", "error", err)
+		os.Exit(1)
 	}
+	logger.Configure(cfg)
 
 	database, err := db.Connect(cfg)
 	if err != nil {
-		log.Fatalf("database connection error: %v", err)
+		slog.Error("database connection error", "error", err)
+		os.Exit(1)
 	}
 
 	sqlDB, err := database.DB()
 	if err != nil {
-		log.Fatalf("database handle error: %v", err)
+		slog.Error("database handle error", "error", err)
+		os.Exit(1)
 	}
 
 	server := &http.Server{
@@ -40,9 +45,10 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("api listening on :%s", cfg.Port)
+		slog.Info("api listening", "port", cfg.Port)
 		if serveErr := server.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			log.Fatalf("server error: %v", serveErr)
+			slog.Error("server error", "error", serveErr)
+			os.Exit(1)
 		}
 	}()
 
@@ -54,10 +60,10 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("server shutdown error: %v", err)
+		slog.Error("server shutdown error", "error", err)
 	}
 
 	if err := sqlDB.Close(); err != nil {
-		log.Printf("database close error: %v", err)
+		slog.Error("database close error", "error", err)
 	}
 }

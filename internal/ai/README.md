@@ -40,3 +40,14 @@ Add the sales agent runtime that:
 5. Calls the selected provider.
 6. Executes requested tool calls.
 7. Persists assistant replies.
+
+## Logging
+
+AI failures use structured `slog` logs configured by:
+
+- `APP_ENV=development|production`
+- `LOG_LEVEL=debug|info|warn|error`
+
+Production uses JSON logs. Development uses text logs.
+
+Do not log API keys, full prompts, raw customer messages, phone numbers, or addresses. Provider errors are logged with safe metadata such as provider, model, status code, and provider error category.

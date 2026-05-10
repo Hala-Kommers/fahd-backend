@@ -8,6 +8,8 @@ import (
 )
 
 type Config struct {
+	AppEnv         string
+	LogLevel       string
 	DatabaseURL    string
 	Port           string
 	JWTSecret      string
@@ -20,6 +22,8 @@ func Load() (Config, error) {
 	_ = godotenv.Load()
 
 	cfg := Config{
+		AppEnv:         getWithDefault("APP_ENV", "development"),
+		LogLevel:       getWithDefault("LOG_LEVEL", "info"),
 		DatabaseURL:    os.Getenv("DATABASE_URL"),
 		Port:           getWithDefault("PORT", "8080"),
 		JWTSecret:      os.Getenv("JWT_SECRET"),

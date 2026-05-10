@@ -2,13 +2,17 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"fahd-backend/internal/ai"
+	aiagent "fahd-backend/internal/ai/agent"
 	"fahd-backend/internal/config"
 
 	"github.com/gin-gonic/gin"
@@ -316,7 +320,13 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cityId"})
 		return
 	}
-	if req.PaymentMethod != "cod" && req.PaymentMethod != "paymob" {
+	paymentMethod := strings.TrimSpace(req.PaymentMethod)
+	switch strings.ToLower(paymentMethod) {
+	case "cod":
+		paymentMethod = "COD"
+	case "paymob":
+		paymentMethod = "Paymob"
+	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payment method"})
 		return
 	}
@@ -432,7 +442,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	order := Order{
 		OrderNumber:   fmt.Sprintf("ORD-%d", time.Now().UnixNano()),
 		Status:        "new",
-		PaymentMethod: req.PaymentMethod,
+		PaymentMethod: paymentMethod,
 		Subtotal:      subtotal,
 		Shipping:      shipping,
 		Discount:      discount,
@@ -550,15 +560,30 @@ type chatMessageRequest struct {
 
 func (h *Handler) SendChatMessage(c *gin.Context) {
 	var req chatMessageRequest
-	if err := c.ShouldBindJSON(&req); err != nil || req.ConversationID == 0 || strings.TrimSpace(req.Message) == "" {
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Message) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid chat payload"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"data": gin.H{
-			"conversationId": req.ConversationID,
-			"reply":          "Thanks for your message. AI replies will be enabled in Phase 7.",
-		},
+	service := aiagent.NewService(h.db, h.cfg)
+	response, err := service.HandleMessage(c.Request.Context(), aiagent.MessageRequest{
+		ConversationID: req.ConversationID,
+		Message:        req.Message,
 	})
+	if err != nil {
+		attrs := []any{"conversation_id", req.ConversationID, "error", err}
+		message := "sales assistant is temporarily unavailable"
+		var providerErr ai.ProviderError
+		if errors.As(err, &providerErr) {
+			attrs = append(attrs, "provider", providerErr.Provider, "provider_error_code", providerErr.Code, "status_code", providerErr.StatusCode)
+			if providerErr.Code == ai.ErrorCodeProviderQuota || providerErr.Code == ai.ErrorCodeProviderRate {
+				message = "sales assistant is temporarily busy. please try again later"
+			}
+		}
+		slog.Error("sales assistant message failed", attrs...)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": message})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": response})
 }
