@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"fahd-backend/internal/ai"
@@ -14,6 +16,13 @@ import (
 
 	"gorm.io/gorm"
 )
+
+type AgentAction struct {
+	Type    string `json:"type"`
+	Payload any    `json:"payload,omitempty"`
+}
+
+var actionRe = regexp.MustCompile(`\[ACTION:(\w+)(?::([^\]]+))?\]`)
 
 type Service struct {
 	db            *gorm.DB
@@ -41,6 +50,32 @@ func NewService(db *gorm.DB, appConfig config.Config) *Service {
 		promptBuilder: NewPromptBuilder(),
 		conversations: NewConversationService(db),
 	}
+}
+
+func parseActions(text string) (string, []AgentAction) {
+	actions := []AgentAction{}
+	cleaned := actionRe.ReplaceAllStringFunc(text, func(match string) string {
+		parts := actionRe.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+		actionType := parts[1]
+		switch actionType {
+		case "address_form":
+			actions = append(actions, AgentAction{Type: "address_form"})
+		case "order_confirmation":
+			actions = append(actions, AgentAction{Type: "order_confirmation"})
+		case "show_product":
+			if len(parts) >= 3 && parts[2] != "" {
+				if id, err := strconv.ParseInt(parts[2], 10, 64); err == nil {
+					actions = append(actions, AgentAction{Type: "show_product", Payload: map[string]any{"productId": id}})
+				}
+			}
+		}
+		return ""
+	})
+	cleaned = strings.TrimSpace(cleaned)
+	return cleaned, actions
 }
 
 func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (MessageResponse, error) {
@@ -165,14 +200,22 @@ func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (Messag
 		reply = "I can help with products, orders, and checkout. How can I help you?"
 	}
 
+	cleanReply, actions := parseActions(reply)
+	reply = cleanReply
+
 	if err := s.conversations.SaveAssistantMessage(ctx, conversationID, reply, allToolCalls, allToolResults, generated.Usage, providerName, cfg.Model); err != nil {
 		slog.Error("sales assistant assistant message save failed", "conversation_id", conversationID, "error", err)
+	}
+
+	actionList := make([]any, len(actions))
+	for i, a := range actions {
+		actionList[i] = a
 	}
 
 	return MessageResponse{
 		ConversationID: conversationID,
 		Reply:          reply,
-		Actions:        []any{},
+		Actions:        actionList,
 		Meta:           defaultMeta(false, nil),
 	}, nil
 }

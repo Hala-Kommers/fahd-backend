@@ -433,14 +433,73 @@ Body fields:
 | `conversationId` | number | No | Existing conversation ID. Omit to start a new conversation. |
 | `message` | string | Yes | Customer message. |
 
-Response:
+Response fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `conversationId` | number | Conversation ID for subsequent messages. |
+| `reply` | string | AI assistant text reply. |
+| `actions` | array | Structured actions for the frontend (see below). |
+| `meta.needsHuman` | boolean | Whether a human agent is needed. |
+| `meta.orderCreated` | boolean | Whether an order was created. |
+| `meta.orderId` | number or null | Created order ID if applicable. |
+
+Action types (each action is an object with `type` and optional `payload`):
+
+| Type | Payload | Description |
+| --- | --- | --- |
+| `address_form` | none | Frontend should display a form for collecting customer name, phone, delivery address, city, and payment method. |
+| `order_confirmation` | none | Frontend should display a confirm order button under the AI message. |
+| `show_product` | `{"productId": 5}` | Frontend should display a button or card linking to the specified product. |
+
+Response with actions example:
 
 ```json
 {
   "data": {
     "conversationId": 1,
-    "reply": "Yes, we have Oud Signature for 120 SAR. Would you like details or help placing an order?",
-    "actions": [],
+    "reply": "Please provide your delivery details so I can process your order.",
+    "actions": [
+      { "type": "address_form" }
+    ],
+    "meta": {
+      "needsHuman": false,
+      "orderCreated": false,
+      "orderId": null
+    }
+  }
+}
+```
+
+Response with order confirmation:
+
+```json
+{
+  "data": {
+    "conversationId": 1,
+    "reply": "Here is your order summary: Oud Signature x1 - 120 SAR. Total: 120 SAR. Please confirm to place the order.",
+    "actions": [
+      { "type": "order_confirmation" }
+    ],
+    "meta": {
+      "needsHuman": false,
+      "orderCreated": false,
+      "orderId": null
+    }
+  }
+}
+```
+
+Response with product action:
+
+```json
+{
+  "data": {
+    "conversationId": 1,
+    "reply": "I recommend Oud Signature, our premium oud fragrance for 120 SAR.",
+    "actions": [
+      { "type": "show_product", "payload": { "productId": 1 } }
+    ],
     "meta": {
       "needsHuman": false,
       "orderCreated": false,
