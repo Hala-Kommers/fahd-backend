@@ -10,6 +10,7 @@ import (
 	"fahd-backend/internal/session"
 
 	"github.com/gorilla/websocket"
+	"gorm.io/gorm"
 )
 
 var upgrader = websocket.Upgrader{
@@ -23,14 +24,16 @@ var upgrader = websocket.Upgrader{
 type ChatHandler struct {
 	hub           *Hub
 	sessionMgr    *session.Manager
+	db            *gorm.DB
 	msgHandler    func(sessionID string, content string)
 	rateLimiter   func(sessionID string) bool
 }
 
-func NewChatHandler(hub *Hub, sessionMgr *session.Manager, msgHandler func(string, string)) *ChatHandler {
+func NewChatHandler(hub *Hub, sessionMgr *session.Manager, db *gorm.DB, msgHandler func(string, string)) *ChatHandler {
 	return &ChatHandler{
 		hub:        hub,
 		sessionMgr: sessionMgr,
+		db:         db,
 		msgHandler: msgHandler,
 		rateLimiter: func(sessionID string) bool {
 			return true
@@ -87,6 +90,25 @@ func (h *ChatHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 			client.Send(ServerMessage{Type: "auth_ok", SessionID: sess.ID})
 			slog.Info("ws session restored", "session_id", sess.ID)
 
+		case "history":
+			sid := client.SessionID()
+			if sid == "" {
+				client.Send(ServerMessage{Type: "error", Error: "session not initialized"})
+				return
+			}
+			sess := h.sessionMgr.Get(sid)
+			if sess == nil || sess.ConversationID == 0 {
+				client.Send(ServerMessage{Type: "history", Messages: []HistoryMessage{}})
+				return
+			}
+			messages, err := h.loadHistory(sess.ConversationID)
+			if err != nil {
+				slog.Error("ws load history failed", "session_id", sid, "error", err)
+				client.Send(ServerMessage{Type: "history", Messages: []HistoryMessage{}})
+				return
+			}
+			client.Send(ServerMessage{Type: "history", Messages: messages})
+
 		case "message":
 			content := strings.TrimSpace(msg.Content)
 			if content == "" {
@@ -117,4 +139,16 @@ func (h *ChatHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 
 	slog.Debug("ws connection closed", "session_id", client.SessionID())
 	time.Sleep(100 * time.Millisecond)
+}
+
+func (h *ChatHandler) loadHistory(conversationID int64) ([]HistoryMessage, error) {
+	var messages []HistoryMessage
+	if err := h.db.Table("messages").
+		Select("id, role, content, tool_calls, tool_results, COALESCE(usage_prompt_tokens,0) AS usage_prompt_tokens, COALESCE(usage_completion_tokens,0) AS usage_completion_tokens, COALESCE(usage_cache_write_tokens,0) AS usage_cache_write_tokens, COALESCE(usage_cache_read_tokens,0) AS usage_cache_read_tokens, COALESCE(usage_reasoning_tokens,0) AS usage_reasoning_tokens, COALESCE(provider,'') AS provider, COALESCE(model,'') AS model, created_at").
+		Where("conversation_id = ?", conversationID).
+		Order("created_at DESC").
+		Find(&messages).Error; err != nil {
+		return nil, err
+	}
+	return messages, nil
 }

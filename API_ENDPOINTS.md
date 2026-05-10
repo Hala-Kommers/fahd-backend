@@ -480,6 +480,7 @@ Frontend sends `{ "type": "ping" }`, backend responds `{ "type": "pong" }`.
 | --- | --- | --- |
 | `init` | none | Create a new anonymous chat session. First message after connecting. |
 | `auth` | `session_id`, `token` | Re-authenticate an existing session after reconnect. |
+| `history` | none | Request conversation message history (most recent first). Must be authenticated first. |
 | `message` | `content` | Send a chat message to the AI assistant. |
 | `ping` | none | Heartbeat keepalive. |
 
@@ -490,6 +491,7 @@ Frontend sends `{ "type": "ping" }`, backend responds `{ "type": "pong" }`.
 | `session_created` | `session_id`, `token`, `expires_at` | New session created after `init`. |
 | `auth_ok` | `session_id` | Session authentication successful. |
 | `auth_error` | `error` | Session authentication failed. |
+| `history` | `messages` | Conversation message history in descending order. Each message includes `role`, `content`, `toolCalls`, `toolResults`, usage tokens, `provider`, `model`, `createdAt`. |
 | `message_received` | none | Message accepted and queued for processing. |
 | `ai_typing` | none | AI provider is processing the request. |
 | `ai_chunk` | `content` | Incremental AI response text. Each chunk contains the full text so far. |

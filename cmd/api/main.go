@@ -59,7 +59,7 @@ func main() {
 		}
 	}
 
-	chatHandler := ws.NewChatHandler(hub, sessionMgr, msgHandler)
+	chatHandler := ws.NewChatHandler(hub, sessionMgr, database, msgHandler)
 
 	workerPool := worker.NewPool(cfg.WorkerCount, msgQueue, hub, database, cfg, sessionMgr)
 
