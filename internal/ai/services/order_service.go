@@ -189,7 +189,7 @@ func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[
 		return nil, fmt.Errorf("create order: %w", err)
 	}
 
-	if err := tx.Table("orders").Select("id").Where("order_number = ?", orderNumber).First(&orderID).Error; err != nil {
+	if err := tx.Table("orders").Select("id").Where("order_number = ?", orderNumber).Scan(&orderID).Error; err != nil {
 		return nil, fmt.Errorf("read order id: %w", err)
 	}
 
