@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -150,6 +151,9 @@ func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (Messag
 				systemPrompt += " When the customer asks about a product, mentions it, or wants to take action on it, they are referring to this product. Use the product ID directly in your tool calls — do NOT ask the customer for the product ID or which product they mean."
 			}
 		}
+		if cid, ok := req.Context["cityId"]; ok {
+			systemPrompt += "\n[Customer City] The customer selected city ID " + fmt.Sprintf("%v", cid) + " from the city dropdown. Use this city ID when creating the order — do NOT ask the customer for their city."
+		}
 	}
 	providerName := provider.Name()
 	var generated ai.GenerateResponse
@@ -200,7 +204,8 @@ func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (Messag
 			result, execErr := tool.Execute(ctx, call.Arguments)
 			if execErr != nil {
 				slog.Error("sales assistant tool execution failed", "conversation_id", conversationID, "tool", call.Name, "error", execErr)
-				errContent := `{"error":"tool execution failed"}`
+				errJSON, _ := json.Marshal(map[string]string{"error": execErr.Error()})
+				errContent := string(errJSON)
 				messages = append(messages, ai.Message{Role: ai.RoleTool, Content: errContent, ToolCallID: call.ID, Metadata: map[string]any{"name": call.Name}})
 				allToolResults = append(allToolResults, ai.ToolResult{Name: call.Name, Content: errContent})
 				continue

@@ -45,12 +45,10 @@ func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[
 	if input.CityID <= 0 {
 		return nil, fmt.Errorf("cityId is required")
 	}
-	paymentMethod := strings.TrimSpace(input.PaymentMethod)
-	switch strings.ToLower(paymentMethod) {
-	case "cod":
-		paymentMethod = "COD"
-	case "paymob":
-		paymentMethod = "Paymob"
+	rawPayment := strings.TrimSpace(input.PaymentMethod)
+	paymentMethod := strings.ToLower(rawPayment)
+	switch paymentMethod {
+	case "cod", "paymob":
 	default:
 		return nil, fmt.Errorf("invalid payment method, must be 'cod' or 'paymob'")
 	}

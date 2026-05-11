@@ -442,7 +442,25 @@ With page context (e.g. opened from a product page):
 }
 ```
 
-The AI automatically understands the customer is referring to the given product, avoiding the need to repeat product details in the message.
+With city context (e.g. user selected a city from a dropdown):
+
+```json
+{
+  "type": "message",
+  "content": "أريد طلب هذا المنتج",
+  "context": { "productId": 2, "variantId": 2, "cityId": 5 }
+}
+```
+
+##### Context Fields
+
+The optional `context` object tells the AI about the customer's current page/selection state so it doesn't need to ask for information the frontend already knows.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `productId` | number | The product the customer is currently viewing. AI uses this ID directly in tool calls without asking. |
+| `variantId` | number | The selected product variant (if applicable). |
+| `cityId` | number | The city selected by the customer from the checkout dropdown. AI uses this when creating orders without asking for the city. |
 
 Backend acknowledges immediately:
 ```json
@@ -493,7 +511,7 @@ Frontend sends `{ "type": "ping" }`, backend responds `{ "type": "pong" }`.
 | `init` | none | Create a new anonymous chat session. First message after connecting. |
 | `auth` | `session_id`, `token` | Re-authenticate an existing session after reconnect. |
 | `history` | none | Request conversation message history (most recent first). Must be authenticated first. |
-| `message` | `content`, `context` | Send a chat message to the AI assistant. Optional `context` object can include `productId` and `variantId` so the AI knows what the customer is currently viewing. |
+| `message` | `content`, `context` | Send a chat message to the AI assistant. Optional `context` object can include `productId`, `variantId`, and `cityId` (see [Context Fields](#context-fields)). |
 | `ping` | none | Heartbeat keepalive. |
 
 #### Server-to-Client Event Types
