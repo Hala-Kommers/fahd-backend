@@ -167,28 +167,47 @@ func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[
 		}
 	}()
 
-	var orderID int64
-	if err := tx.Table("orders").Create(&map[string]any{
-		"order_number":      orderNumber,
-		"status":            "new",
-		"payment_method":    paymentMethod,
-		"payment_status":    "pending",
-		"subtotal":          subtotal,
-		"shipping":          shipping,
-		"discount":          discount,
-		"grand_total":       grandTotal,
-		"currency":          "SAR",
-		"coupon_code":       strings.TrimSpace(input.CouponCode),
-		"customer_name":     input.CustomerName,
-		"customer_phone":    input.CustomerPhone,
-		"customer_email":    strings.TrimSpace(input.CustomerEmail),
-		"address_raw":       input.AddressRaw,
-		"city_id":           input.CityID,
-		"address_confidence": 0,
+	type orderRow struct {
+		OrderNumber      string  `gorm:"column:order_number"`
+		Status           string  `gorm:"column:status"`
+		PaymentMethod    string  `gorm:"column:payment_method"`
+		PaymentStatus    string  `gorm:"column:payment_status"`
+		Subtotal         float64 `gorm:"column:subtotal"`
+		Shipping         float64 `gorm:"column:shipping"`
+		Discount         float64 `gorm:"column:discount"`
+		GrandTotal       float64 `gorm:"column:grand_total"`
+		Currency         string  `gorm:"column:currency"`
+		CouponCode       string  `gorm:"column:coupon_code"`
+		CustomerName     string  `gorm:"column:customer_name"`
+		CustomerPhone    string  `gorm:"column:customer_phone"`
+		CustomerEmail    string  `gorm:"column:customer_email"`
+		AddressRaw       string  `gorm:"column:address_raw"`
+		CityID           int64   `gorm:"column:city_id"`
+		AddressConfidence int    `gorm:"column:address_confidence"`
+	}
+
+	if err := tx.Table("orders").Create(&orderRow{
+		OrderNumber:       orderNumber,
+		Status:            "new",
+		PaymentMethod:     paymentMethod,
+		PaymentStatus:     "pending",
+		Subtotal:          subtotal,
+		Shipping:          shipping,
+		Discount:          discount,
+		GrandTotal:        grandTotal,
+		Currency:          "SAR",
+		CouponCode:        strings.TrimSpace(input.CouponCode),
+		CustomerName:      input.CustomerName,
+		CustomerPhone:     input.CustomerPhone,
+		CustomerEmail:     strings.TrimSpace(input.CustomerEmail),
+		AddressRaw:        input.AddressRaw,
+		CityID:            input.CityID,
+		AddressConfidence: 0,
 	}).Error; err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
 	}
 
+	var orderID int64
 	if err := tx.Table("orders").Select("id").Where("order_number = ?", orderNumber).Scan(&orderID).Error; err != nil {
 		return nil, fmt.Errorf("read order id: %w", err)
 	}
