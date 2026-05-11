@@ -36,11 +36,15 @@ func (s *ConversationService) StartOrContinue(ctx context.Context, conversationI
 	return created.ID, nil
 }
 
-func (s *ConversationService) SaveMessage(ctx context.Context, conversationID int64, role ai.Role, content string) error {
+func (s *ConversationService) SaveMessage(ctx context.Context, conversationID int64, role ai.Role, content string, metadata map[string]any) error {
 	row := map[string]any{
 		"conversation_id": conversationID,
 		"role":            string(role),
 		"content":         content,
+	}
+	if len(metadata) > 0 {
+		encoded, _ := json.Marshal(metadata)
+		row["metadata"] = string(encoded)
 	}
 	if err := s.db.WithContext(ctx).Table("messages").Create(&row).Error; err != nil {
 		return fmt.Errorf("save message: %w", err)
@@ -95,10 +99,11 @@ func (s *ConversationService) RecentMessages(ctx context.Context, conversationID
 		Content     string
 		ToolCalls   *string
 		ToolResults *string
+		Metadata    *string
 	}
 	var rows []messageRow
 	if err := s.db.WithContext(ctx).Table("messages").
-		Select("role, content, tool_calls, tool_results").
+		Select("role, content, tool_calls, tool_results, metadata").
 		Where("conversation_id = ? AND content IS NOT NULL", conversationID).
 		Order("created_at ASC").
 		Limit(limit).
@@ -127,6 +132,18 @@ func (s *ConversationService) RecentMessages(ctx context.Context, conversationID
 					msg.Metadata = map[string]any{}
 				}
 				msg.Metadata["tool_results"] = results
+			}
+		}
+		if row.Metadata != nil {
+			var meta map[string]any
+			if err := json.Unmarshal([]byte(*row.Metadata), &meta); err == nil && len(meta) > 0 {
+				if msg.Metadata == nil {
+					msg.Metadata = meta
+				} else {
+					for k, v := range meta {
+						msg.Metadata[k] = v
+					}
+				}
 			}
 		}
 

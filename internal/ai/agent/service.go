@@ -114,12 +114,12 @@ func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (Messag
 	}
 	slog.Debug("sales assistant provider selected", "conversation_id", conversationID, "provider", cfg.Provider, "model", cfg.Model, "enabled", cfg.Enabled, "has_api_key", cfg.APIKey != "")
 
-	if err := s.conversations.SaveMessage(ctx, conversationID, ai.RoleUser, message); err != nil {
+	if err := s.conversations.SaveMessage(ctx, conversationID, ai.RoleUser, message, req.Context); err != nil {
 		slog.Error("sales assistant user message save failed", "conversation_id", conversationID, "error", err)
 		return MessageResponse{}, err
 	}
 
-	messages, err := s.conversations.RecentMessages(ctx, conversationID, 20)
+	messages, err := s.conversations.RecentMessages(ctx, conversationID, 100)
 	if err != nil {
 		slog.Error("sales assistant message history load failed", "conversation_id", conversationID, "error", err)
 		return MessageResponse{}, err
@@ -135,25 +135,54 @@ func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (Messag
 	slog.Debug("sales assistant tools registered", "conversation_id", conversationID, "tool_count", len(toolDefinitions))
 
 	systemPrompt := s.promptBuilder.Build(cfg)
-	if req.Context != nil {
-		contextParts := []string{}
-		hasProductID := false
-		if pid, ok := req.Context["productId"]; ok {
-			contextParts = append(contextParts, fmt.Sprintf("product ID %v", pid))
-			hasProductID = true
-		}
-		if vid, ok := req.Context["variantId"]; ok {
-			contextParts = append(contextParts, fmt.Sprintf("variant ID %v", vid))
-		}
-		if len(contextParts) > 0 {
-			systemPrompt += "\n\n[Current Page Context] The customer is currently viewing " + strings.Join(contextParts, ", ") + "."
-			if hasProductID {
-				systemPrompt += " When the customer asks about a product, mentions it, or wants to take action on it, they are referring to this product. Use the product ID directly in your tool calls — do NOT ask the customer for the product ID or which product they mean."
+
+	// Collect context from previous user messages (saved in metadata)
+	ctxProductID := any(nil)
+	ctxVariantID := any(nil)
+	ctxCityID := any(nil)
+	for _, msg := range messages {
+		if msg.Role == ai.RoleUser && msg.Metadata != nil {
+			if pid, ok := msg.Metadata["productId"]; ok && ctxProductID == nil {
+				ctxProductID = pid
+			}
+			if vid, ok := msg.Metadata["variantId"]; ok && ctxVariantID == nil {
+				ctxVariantID = vid
+			}
+			if cid, ok := msg.Metadata["cityId"]; ok && ctxCityID == nil {
+				ctxCityID = cid
 			}
 		}
-		if cid, ok := req.Context["cityId"]; ok {
-			systemPrompt += "\n[Customer City] The customer selected city ID " + fmt.Sprintf("%v", cid) + " from the city dropdown. Use this city ID when creating the order — do NOT ask the customer for their city."
+	}
+	// Current message context overrides previous
+	if req.Context != nil {
+		if pid, ok := req.Context["productId"]; ok {
+			ctxProductID = pid
 		}
+		if vid, ok := req.Context["variantId"]; ok {
+			ctxVariantID = vid
+		}
+		if cid, ok := req.Context["cityId"]; ok {
+			ctxCityID = cid
+		}
+	}
+
+	contextParts := []string{}
+	hasProductID := false
+	if ctxProductID != nil {
+		contextParts = append(contextParts, fmt.Sprintf("product ID %v", ctxProductID))
+		hasProductID = true
+	}
+	if ctxVariantID != nil {
+		contextParts = append(contextParts, fmt.Sprintf("variant ID %v", ctxVariantID))
+	}
+	if len(contextParts) > 0 {
+		systemPrompt += "\n\n[Current Page Context] The customer is currently viewing " + strings.Join(contextParts, ", ") + "."
+		if hasProductID {
+			systemPrompt += " When the customer asks about a product, mentions it, or wants to take action on it, they are referring to this product. Use the product ID directly in your tool calls — do NOT ask the customer for the product ID or which product they mean."
+		}
+	}
+	if ctxCityID != nil {
+		systemPrompt += "\n[Customer City] The customer selected city ID " + fmt.Sprintf("%v", ctxCityID) + " from the city dropdown. Use this city ID when creating the order — do NOT ask the customer for their city."
 	}
 	providerName := provider.Name()
 	var generated ai.GenerateResponse
