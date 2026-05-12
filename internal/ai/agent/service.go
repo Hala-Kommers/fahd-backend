@@ -249,7 +249,7 @@ func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (Messag
 	}
 
 	if reply == "" {
-		reply = "I can help with products, orders, and checkout. How can I help you?"
+		return MessageResponse{}, fmt.Errorf("ai failed to generate a response after 8 steps")
 	}
 
 	cleanReply, actions := parseActions(reply)
