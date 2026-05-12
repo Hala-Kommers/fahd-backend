@@ -92,7 +92,7 @@ func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (Messag
 		return MessageResponse{}, err
 	}
 
-	cfg, err := ai.LoadBotConfig(s.db.WithContext(ctx))
+	cfg, err := ai.LoadBotConfig(s.db.WithContext(ctx), s.appConfig.JWTSecret)
 	if err != nil {
 		slog.Error("sales assistant bot config load failed", "conversation_id", conversationID, "error", err)
 		return MessageResponse{}, err

@@ -1000,6 +1000,94 @@ Response:
 
 All admin AI and conversation endpoints require `Authorization: Bearer <access_token>`.
 
+### GET `/api/admin/bot/config`
+
+Returns the bot configuration. The `apiKey` value is never returned — instead a `hasApiKey` boolean indicates whether a key is stored.
+
+Response:
+
+```json
+{
+  "data": {
+    "id": 1,
+    "provider": "google",
+    "model": "gemini-2.0-flash",
+    "hasApiKey": true,
+    "temperature": 0.7,
+    "maxTokens": 1000,
+    "enabled": true,
+    "persona": {"tone": "friendly_saudi", "style": "concise", "botName": "فهد", "language": "ar-SA", "emojiLevel": "medium"},
+    "customInstructions": "Some custom instructions here"
+  }
+}
+```
+
+If no config exists yet:
+```json
+{ "data": {} }
+```
+
+### PATCH `/api/admin/bot/config`
+
+Updates bot configuration fields. Only the fields included in the request body are updated.
+
+When sending a new API key, it is encrypted before storage and never returned in responses.
+If `apiKey` is set to an empty string, the stored key is cleared.
+If `apiKey` is omitted, the existing key (if any) is preserved.
+
+Body (all fields optional):
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `provider` | string | AI provider, e.g. `google`. |
+| `model` | string | Model name, e.g. `gemini-2.0-flash`. |
+| `temperature` | number | Generation temperature (0.0–1.0). |
+| `maxTokens` | number | Max output tokens. |
+| `enabled` | boolean | Enable/disable the sales assistant. |
+| `persona` | object | JSON persona settings (tone, style, botName, language, emojiLevel). |
+| `customInstructions` | string | Custom instructions appended to the AI system prompt. |
+| `apiKey` | string | API key for the AI provider. Encrypted before storage. Send `""` to clear. |
+
+Request:
+
+```json
+{
+  "provider": "google",
+  "model": "gemini-2.0-flash",
+  "temperature": 0.7,
+  "maxTokens": 1000,
+  "enabled": true,
+  "persona": {"tone": "friendly_saudi", "style": "concise", "botName": "فهد", "language": "ar-SA", "emojiLevel": "medium"},
+  "customInstructions": "Answer in Arabic only.",
+  "apiKey": "your-api-key-here"
+}
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "id": 1
+  }
+}
+```
+
+### POST `/api/admin/bot/test-connection`
+
+Tests the AI provider connection using the stored config.
+
+Response:
+
+```json
+{
+  "data": {
+    "ok": true,
+    "provider": "google"
+  }
+}
+```
+
 ### GET `/api/admin/ai/stats`
 
 Aggregated AI usage statistics with optional filters and breakdowns.

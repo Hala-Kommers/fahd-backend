@@ -12,6 +12,7 @@ type BotConfig struct {
 	Provider           string  `json:"provider"`
 	Model              string  `json:"model"`
 	APIKey             string  `json:"-"`
+	HasAPIKey          bool    `json:"hasApiKey"`
 	Temperature        float64 `json:"temperature"`
 	MaxTokens          int     `json:"maxTokens"`
 	Enabled            bool    `json:"enabled"`
@@ -19,7 +20,7 @@ type BotConfig struct {
 	CustomInstructions string  `json:"customInstructions"`
 }
 
-func LoadBotConfig(db *gorm.DB) (BotConfig, error) {
+func LoadBotConfig(db *gorm.DB, jwtSecret string) (BotConfig, error) {
 	var cfg BotConfig
 	err := db.Table("bot_config").
 		Select("id, provider, model, api_key, temperature, max_tokens, enabled, persona, custom_instructions").
@@ -32,6 +33,13 @@ func LoadBotConfig(db *gorm.DB) (BotConfig, error) {
 	cfg.Provider = strings.TrimSpace(strings.ToLower(cfg.Provider))
 	cfg.Model = strings.TrimSpace(cfg.Model)
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
+	if cfg.APIKey != "" {
+		decrypted, err := DecryptAPIKey(cfg.APIKey, jwtSecret)
+		if err == nil {
+			cfg.APIKey = strings.TrimSpace(decrypted)
+			cfg.HasAPIKey = cfg.APIKey != ""
+		}
+	}
 	if cfg.Temperature == 0 {
 		cfg.Temperature = 0.7
 	}

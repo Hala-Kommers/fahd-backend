@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"fahd-backend/internal/ai"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -680,6 +682,12 @@ func (h *Handler) AdminGetBotConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load bot config"})
 		return
 	}
+	hasKey := false
+	if raw, ok := row["api_key"].(string); ok && raw != "" {
+		hasKey = true
+	}
+	delete(row, "api_key")
+	row["hasApiKey"] = hasKey
 	c.JSON(http.StatusOK, gin.H{"data": row})
 }
 
@@ -689,6 +697,31 @@ func (h *Handler) AdminPatchBotConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bot config payload"})
 		return
 	}
+
+	apiKeyValue, hasCamel := payload["apiKey"]
+	_, hasSnake := payload["api_key"]
+	delete(payload, "apiKey")
+	if hasCamel && !hasSnake {
+		switch v := apiKeyValue.(type) {
+		case string:
+			if v != "" {
+				encrypted, err := ai.EncryptAPIKey(v, h.cfg.JWTSecret)
+				if err == nil {
+					payload["api_key"] = encrypted
+				}
+			} else {
+				payload["api_key"] = ""
+			}
+		}
+	} else if hasSnake {
+		if raw, ok := payload["api_key"].(string); ok && raw != "" {
+			encrypted, err := ai.EncryptAPIKey(raw, h.cfg.JWTSecret)
+			if err == nil {
+				payload["api_key"] = encrypted
+			}
+		}
+	}
+
 	var existing map[string]any
 	err := h.db.Table("bot_config").Order("updated_at DESC").Take(&existing).Error
 	if err == gorm.ErrRecordNotFound {
