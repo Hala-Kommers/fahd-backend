@@ -15,7 +15,7 @@ func NewPromptBuilder() *PromptBuilder {
 
 func (b *PromptBuilder) Build(cfg ai.BotConfig) string {
 	parts := []string{
-		"You are Fahd store sales assistant.",
+		"You are a store sales assistant.",
 		"Help customers discover products, answer product questions, track orders, and create orders.",
 		"Never invent prices, stock, shipping details, payment availability, coupon validity, or order status.",
 		"Use tools for product questions. If the customer asks about variations, sizes, colors, stock, images, specifications, FAQ, or tiered prices, call get_product_details before answering.",
