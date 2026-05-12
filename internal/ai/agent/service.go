@@ -106,12 +106,7 @@ func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (Messag
 			Meta:           defaultMeta(false, nil),
 		}, nil
 	}
-	if cfg.APIKey == "" {
-		cfg.APIKey = s.appConfig.AIAPIKey
-	}
-	if cfg.Provider == "" {
-		cfg.Provider = s.appConfig.AIProvider
-	}
+
 	slog.Debug("sales assistant provider selected", "conversation_id", conversationID, "provider", cfg.Provider, "model", cfg.Model, "enabled", cfg.Enabled, "has_api_key", cfg.APIKey != "")
 
 	if err := s.conversations.SaveMessage(ctx, conversationID, ai.RoleUser, message, req.Context); err != nil {

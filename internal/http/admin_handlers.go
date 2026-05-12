@@ -744,7 +744,12 @@ func (h *Handler) AdminPatchBotConfig(c *gin.Context) {
 }
 
 func (h *Handler) AdminTestBotConnection(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true, "provider": h.cfg.AIProvider}})
+	provider := "google"
+	var row struct{ Provider string }
+	if err := h.db.Table("bot_config").Select("provider").Order("updated_at DESC").Take(&row).Error; err == nil && row.Provider != "" {
+		provider = row.Provider
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true, "provider": provider}})
 }
 
 func (h *Handler) AdminAIStats(c *gin.Context) {

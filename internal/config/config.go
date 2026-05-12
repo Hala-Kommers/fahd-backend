@@ -14,8 +14,6 @@ type Config struct {
 	Port           string
 	JWTSecret      string
 	FrontendOrigin string
-	AIProvider     string
-	AIAPIKey       string
 	SessionTTL     string
 	WSQueueSize    int
 	WorkerCount    int
@@ -31,8 +29,6 @@ func Load() (Config, error) {
 		Port:           getWithDefault("PORT", "8080"),
 		JWTSecret:      os.Getenv("JWT_SECRET"),
 		FrontendOrigin: os.Getenv("FRONTEND_ORIGIN"),
-		AIProvider:     os.Getenv("AI_PROVIDER"),
-		AIAPIKey:       os.Getenv("AI_API_KEY"),
 		SessionTTL:     getWithDefault("SESSION_TTL", "1h"),
 		WSQueueSize:    100,
 		WorkerCount:    2,
@@ -46,12 +42,6 @@ func Load() (Config, error) {
 	}
 	if cfg.FrontendOrigin == "" {
 		return Config{}, fmt.Errorf("FRONTEND_ORIGIN is required")
-	}
-	if cfg.AIProvider == "" {
-		return Config{}, fmt.Errorf("AI_PROVIDER is required")
-	}
-	if cfg.AIAPIKey == "" {
-		return Config{}, fmt.Errorf("AI_API_KEY is required")
 	}
 
 	return cfg, nil
