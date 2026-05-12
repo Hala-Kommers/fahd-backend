@@ -1,0 +1,25 @@
+services:
+  api:
+    build:
+      context: .
+    env_file:
+      - .env
+    environment:
+      PORT: ${PORT:-8085}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8085:8085"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  migrate:
+    build:
+      context: .
+    env_file:
+      - .env
+    environment:
+      PORT: ${PORT:-8085}
+    entrypoint: ["/app/migrate"]
+    restart: "no"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
