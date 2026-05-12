@@ -688,6 +688,15 @@ func (h *Handler) AdminGetBotConfig(c *gin.Context) {
 	}
 	delete(row, "api_key")
 	row["hasApiKey"] = hasKey
+	// Decode JSONB byte slices to JSON objects for proper serialization
+	for _, key := range []string{"persona"} {
+		if raw, ok := row[key].([]byte); ok && raw != nil {
+			var decoded any
+			if err := json.Unmarshal(raw, &decoded); err == nil {
+				row[key] = decoded
+			}
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{"data": row})
 }
 
@@ -718,6 +727,28 @@ func (h *Handler) AdminPatchBotConfig(c *gin.Context) {
 			encrypted, err := ai.EncryptAPIKey(raw, h.cfg.JWTSecret)
 			if err == nil {
 				payload["api_key"] = encrypted
+			}
+		}
+	}
+
+	// Convert camelCase keys to snake_case for DB columns
+	keyMap := map[string]string{
+		"customInstructions": "custom_instructions",
+		"maxTokens":          "max_tokens",
+	}
+	for camel, snake := range keyMap {
+		if v, ok := payload[camel]; ok {
+			payload[snake] = v
+			delete(payload, camel)
+		}
+	}
+
+	// JSON-serialize non-primitive values (maps, slices) for JSONB columns
+	for k, v := range payload {
+		switch v.(type) {
+		case map[string]any, []any:
+			if encoded, err := json.Marshal(v); err == nil {
+				payload[k] = string(encoded)
 			}
 		}
 	}
