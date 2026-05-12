@@ -8,25 +8,21 @@ import (
 )
 
 type BotConfig struct {
-	ID           int64   `json:"id"`
-	Provider     string  `json:"provider"`
-	Model        string  `json:"model"`
-	APIKey       string  `json:"-"`
-	Temperature  float64 `json:"temperature"`
-	MaxTokens    int     `json:"maxTokens"`
-	Enabled      bool    `json:"enabled"`
-	SystemPrompt string  `json:"systemPrompt"`
-	Persona      []byte  `json:"persona"`
-	System       []byte  `json:"system"`
-	Templates    []byte  `json:"templates"`
-	Closing      []byte  `json:"closing"`
-	SettingsJSON []byte  `json:"settingsJson"`
+	ID                 int64   `json:"id"`
+	Provider           string  `json:"provider"`
+	Model              string  `json:"model"`
+	APIKey             string  `json:"-"`
+	Temperature        float64 `json:"temperature"`
+	MaxTokens          int     `json:"maxTokens"`
+	Enabled            bool    `json:"enabled"`
+	Persona            []byte  `json:"persona"`
+	CustomInstructions string  `json:"customInstructions"`
 }
 
 func LoadBotConfig(db *gorm.DB) (BotConfig, error) {
 	var cfg BotConfig
 	err := db.Table("bot_config").
-		Select("id, provider, model, api_key, temperature, max_tokens, enabled, system_prompt, persona, system, templates, closing, settings_json").
+		Select("id, provider, model, api_key, temperature, max_tokens, enabled, persona, custom_instructions").
 		Order("updated_at DESC").
 		Take(&cfg).Error
 	if err != nil {

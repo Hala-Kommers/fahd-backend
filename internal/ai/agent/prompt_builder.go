@@ -31,28 +31,16 @@ func (b *PromptBuilder) Build(cfg ai.BotConfig) string {
 		"Use lookup_order to check order status or find past orders. The customer must provide their order number and phone number to verify ownership. Never call lookup_order without both the order number and the customer's phone number.",
 	}
 
-	if strings.TrimSpace(cfg.SystemPrompt) != "" {
-		parts = append(parts, "Configured system prompt: "+strings.TrimSpace(cfg.SystemPrompt))
-	}
-	appendJSONSection := func(label string, raw []byte) {
-		if len(raw) == 0 || string(raw) == "{}" || string(raw) == "null" {
-			return
-		}
+	if len(cfg.Persona) > 0 && string(cfg.Persona) != "{}" && string(cfg.Persona) != "null" {
 		var decoded any
-		if err := json.Unmarshal(raw, &decoded); err != nil {
-			return
+		if err := json.Unmarshal(cfg.Persona, &decoded); err == nil {
+			encoded, _ := json.Marshal(decoded)
+			parts = append(parts, "Persona: "+string(encoded))
 		}
-		encoded, err := json.Marshal(decoded)
-		if err != nil {
-			return
-		}
-		parts = append(parts, label+": "+string(encoded))
 	}
-
-	appendJSONSection("Persona", cfg.Persona)
-	appendJSONSection("System settings", cfg.System)
-	appendJSONSection("Response templates", cfg.Templates)
-	appendJSONSection("Closing rules", cfg.Closing)
+	if strings.TrimSpace(cfg.CustomInstructions) != "" {
+		parts = append(parts, strings.TrimSpace(cfg.CustomInstructions))
+	}
 
 	return strings.Join(parts, "\n")
 }
