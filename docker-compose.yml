@@ -7,10 +7,7 @@ services:
     environment:
       PORT: ${PORT:-8085}
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8085:8085"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    network_mode: host
 
   migrate:
     build:
@@ -21,5 +18,4 @@ services:
       PORT: ${PORT:-8085}
     entrypoint: ["/app/migrate"]
     restart: "no"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    network_mode: host
