@@ -39,7 +39,6 @@ fahd-backend/
     chat/
     admin/
     ai/
-    policies/
     websocket/
   migrations/
   sql/
@@ -92,8 +91,6 @@ Core tables:
 - `orders`
 - `order_items`
 - `coupons`
-- `policies`
-- `global_faq`
 - `conversations`
 - `messages`
 - `bot_config`
@@ -204,17 +201,6 @@ PATCH  /api/admin/coupons/:code
 DELETE /api/admin/coupons/:code
 ```
 
-Policies/FAQ:
-
-```txt
-GET    /api/admin/policies
-POST   /api/admin/policies
-PATCH  /api/admin/policies/:id
-DELETE /api/admin/policies/:id
-GET    /api/admin/faq
-PATCH  /api/admin/faq
-```
-
 Bot config:
 
 ```txt
@@ -272,8 +258,6 @@ Responsibilities:
 - Build prompts using:
   - product catalog
   - product FAQ
-  - global FAQ
-  - policies
   - conversation history
 - Save user and AI messages.
 - Return AI reply to frontend.

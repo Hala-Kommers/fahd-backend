@@ -628,50 +628,6 @@ func (h *Handler) AdminDeleteCoupon(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"code": code, "deleted": true}})
 }
 
-func (h *Handler) AdminListPolicies(c *gin.Context) {
-	var rows []map[string]any
-	if err := h.db.Table("policies").Order("updated_at DESC").Find(&rows).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load policies"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": rows})
-}
-
-func (h *Handler) AdminCreatePolicy(c *gin.Context) { h.createTableRow(c, "policies", "title") }
-func (h *Handler) AdminUpdatePolicy(c *gin.Context) { h.updateTableRow(c, "policies", "id", c.Param("id")) }
-func (h *Handler) AdminDeletePolicy(c *gin.Context) { h.deleteTableRow(c, "policies", "id", c.Param("id")) }
-
-func (h *Handler) AdminGetFAQ(c *gin.Context) {
-	var rows []map[string]any
-	if err := h.db.Table("global_faq").Order("sort_order ASC, id ASC").Find(&rows).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load faq"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"data": rows})
-}
-
-func (h *Handler) AdminPatchFAQ(c *gin.Context) {
-	var payload struct {
-		Items []map[string]any `json:"items"`
-	}
-	if err := c.ShouldBindJSON(&payload); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid faq payload"})
-		return
-	}
-	if err := h.db.Exec("DELETE FROM global_faq").Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear faq"})
-		return
-	}
-	for i, item := range payload.Items {
-		item["sort_order"] = i + 1
-		if err := h.db.Table("global_faq").Create(&item).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save faq"})
-			return
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"count": len(payload.Items)}})
-}
-
 func (h *Handler) AdminGetBotConfig(c *gin.Context) {
 	var row map[string]any
 	if err := h.db.Table("bot_config").Order("updated_at DESC").Take(&row).Error; err != nil {
@@ -827,7 +783,7 @@ func (h *Handler) AdminAIStats(c *gin.Context) {
 		Provider        string `json:"provider"`
 		TotalMessages   int64  `json:"totalMessages"`
 		PromptTokens    int64  `json:"promptTokens"`
-		CompletionTokens int64 `json:"completionTokens"`
+		CompletionTokens int64  `json:"completionTokens"`
 	}
 	var byProvider []providerStat
 	_ = h.db.Raw(`
@@ -845,7 +801,7 @@ func (h *Handler) AdminAIStats(c *gin.Context) {
 		Model           string `json:"model"`
 		TotalMessages   int64  `json:"totalMessages"`
 		PromptTokens    int64  `json:"promptTokens"`
-		CompletionTokens int64 `json:"completionTokens"`
+		CompletionTokens int64  `json:"completionTokens"`
 	}
 	var byModel []modelStat
 	_ = h.db.Raw(`

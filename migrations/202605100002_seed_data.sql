@@ -50,24 +50,13 @@ INSERT INTO coupons (code, type, value, min_order, starts_at, expires_at, is_act
 VALUES ('WELCOME10', 'percentage', 10.00, 100.00, NOW(), NOW() + INTERVAL '30 days', TRUE)
 ON CONFLICT (code) DO NOTHING;
 
-INSERT INTO policies (key, title, body, content, applies_to, is_active)
-VALUES
-  ('shipping', 'Shipping Policy', 'Delivery in 1-3 business days for major cities.', '["Delivery in 1-3 business days", "Tracking is available"]'::jsonb, 'all', TRUE),
-  ('returns', 'Return Policy', 'Returns accepted within 7 days for unopened products.', '["Returns within 7 days", "Product must be unopened"]'::jsonb, 'all', TRUE)
-ON CONFLICT (key) DO NOTHING;
-
-INSERT INTO global_faq (question, answer, sort_order, is_active)
-VALUES
-  ('How do I track my order?', 'Use your order number on the tracking page.', 1, TRUE),
-  ('Which payment methods are supported?', 'COD and Online payments are supported.', 2, TRUE);
-
 INSERT INTO bot_config (provider, model, enabled, persona, system, templates, closing)
 SELECT
   'google',
   'gemini-2.0-flash',
   TRUE,
   '{"botName":"فهد","tone":"friendly_saudi","style":"concise","language":"ar-SA","emojiLevel":"medium"}'::jsonb,
-  '{"systemPrompt":"You are Fahd store assistant","allowedSources":["catalog","product_faq","store_policies"]}'::jsonb,
+  '{"systemPrompt":"You are Fahd store assistant","allowedSources":["catalog","product_faq"]}'::jsonb,
   '{"welcome":"هلا 👋 أبشر..."}'::jsonb,
   '{"paymentMethodsEnabled":["cod","paymob"]}'::jsonb
 WHERE NOT EXISTS (SELECT 1 FROM bot_config);
@@ -78,7 +67,5 @@ DELETE FROM product_images WHERE url = 'https://images.unsplash.com/photo-159403
 DELETE FROM products WHERE sku = 'P-1001';
 DELETE FROM categories WHERE slug IN ('perfumes', 'body-care', 'gift-sets');
 DELETE FROM coupons WHERE code = 'WELCOME10';
-DELETE FROM policies WHERE key IN ('shipping', 'returns');
-DELETE FROM global_faq WHERE question IN ('How do I track my order?', 'Which payment methods are supported?');
 DELETE FROM bot_config WHERE model = 'gemini-2.0-flash';
 DELETE FROM users WHERE username = 'admin';

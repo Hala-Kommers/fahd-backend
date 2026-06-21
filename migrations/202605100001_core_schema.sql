@@ -172,35 +172,6 @@ CREATE TABLE IF NOT EXISTS order_items (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- policies and faq
-CREATE TABLE IF NOT EXISTS policies (
-    id BIGSERIAL PRIMARY KEY,
-    key TEXT UNIQUE,
-    title TEXT NOT NULL,
-    content JSONB NOT NULL DEFAULT '[]'::jsonb,
-    cities JSONB,
-    body TEXT,
-    last_updated TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    applies_to TEXT NOT NULL DEFAULT 'all' CHECK (applies_to IN ('all', 'category', 'product')),
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS global_faq (
-    id BIGSERIAL PRIMARY KEY,
-    question TEXT,
-    answer TEXT,
-    items JSONB,
-    sort_order INT NOT NULL DEFAULT 0,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT faq_shape_check CHECK (
-        (items IS NOT NULL) OR (question IS NOT NULL AND answer IS NOT NULL)
-    )
-);
-
 -- conversations and messages
 CREATE TABLE IF NOT EXISTS conversations (
     id BIGSERIAL PRIMARY KEY,
@@ -312,8 +283,6 @@ DROP TABLE IF EXISTS settings;
 DROP TABLE IF EXISTS bot_config;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS conversations;
-DROP TABLE IF EXISTS global_faq;
-DROP TABLE IF EXISTS policies;
 DROP TABLE IF EXISTS order_items;
 DROP TABLE IF EXISTS orders;
 DROP TABLE IF EXISTS coupons;
