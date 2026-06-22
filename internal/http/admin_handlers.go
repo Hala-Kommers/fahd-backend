@@ -764,53 +764,249 @@ func isValidOrderStatus(status string) bool {
 }
 
 func (h *Handler) AdminListCoupons(c *gin.Context) {
-	var rows []map[string]any
-	if err := h.db.Table("coupons").Order("created_at DESC").Find(&rows).Error; err != nil {
+	page := 1
+	limit := 20
+	if v := c.Query("page"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	if v := c.Query("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			if parsed < 1 {
+				parsed = 1
+			}
+			if parsed > 100 {
+				parsed = 100
+			}
+			limit = parsed
+		}
+	}
+
+	q := h.db.Table("coupons").Order("created_at DESC")
+	if code := strings.TrimSpace(c.Query("code")); code != "" {
+		q = q.Where("code ILIKE ?", "%"+code+"%")
+	}
+	if typ := strings.TrimSpace(c.Query("type")); typ != "" {
+		if !isValidCouponType(typ) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid type"})
+			return
+		}
+		q = q.Where("type = ?", typ)
+	}
+	if isActive := strings.TrimSpace(c.Query("isActive")); isActive != "" {
+		parsed, err := strconv.ParseBool(isActive)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid isActive"})
+			return
+		}
+		q = q.Where("is_active = ?", parsed)
+	}
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		q = q.Where("code ILIKE ?", "%"+search+"%")
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to count coupons"})
+		return
+	}
+
+	var rows []adminCouponResponse
+	offset := (page - 1) * limit
+	if err := q.Offset(offset).Limit(limit).Find(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load coupons"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": rows})
+	totalPages := int((total + int64(limit) - 1) / int64(limit))
+	c.JSON(http.StatusOK, gin.H{"data": rows, "meta": gin.H{"page": page, "limit": limit, "total": total, "totalPages": totalPages}})
+}
+
+func (h *Handler) AdminGetCoupon(c *gin.Context) {
+	code := strings.TrimSpace(c.Param("code"))
+	var coupon adminCouponResponse
+	if err := h.db.Table("coupons").Where("LOWER(code) = LOWER(?)", code).Take(&coupon).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "coupon not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load coupon"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": coupon})
 }
 
 func (h *Handler) AdminCreateCoupon(c *gin.Context) {
-	var payload map[string]any
-	if err := c.ShouldBindJSON(&payload); err != nil {
+	var req adminCouponUpsertRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid coupon payload"})
 		return
 	}
-	if strings.TrimSpace(toString(payload["code"])) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "code is required"})
+	payload, err := buildCouponPayload(req, true)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	if err := h.db.Table("coupons").Create(&payload).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create coupon"})
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"data": payload})
+	var coupon adminCouponResponse
+	if err := h.db.Table("coupons").Where("LOWER(code) = LOWER(?)", payload["code"]).Take(&coupon).Error; err != nil {
+		c.JSON(http.StatusCreated, gin.H{"data": payload})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": coupon})
 }
 
 func (h *Handler) AdminUpdateCoupon(c *gin.Context) {
 	code := c.Param("code")
-	var payload map[string]any
-	if err := c.ShouldBindJSON(&payload); err != nil {
+	var req adminCouponUpsertRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid coupon payload"})
 		return
 	}
-	delete(payload, "code")
-	if err := h.db.Table("coupons").Where("LOWER(code) = LOWER(?)", code).Updates(payload).Error; err != nil {
+	payload, err := buildCouponPayload(req, false)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(payload) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no coupon fields to update"})
+		return
+	}
+	payload["updated_at"] = time.Now()
+	result := h.db.Table("coupons").Where("LOWER(code) = LOWER(?)", code).Updates(payload)
+	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update coupon"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"code": code}})
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "coupon not found"})
+		return
+	}
+	var coupon adminCouponResponse
+	if err := h.db.Table("coupons").Where("LOWER(code) = LOWER(?)", code).Take(&coupon).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"code": code}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": coupon})
 }
 
 func (h *Handler) AdminDeleteCoupon(c *gin.Context) {
 	code := c.Param("code")
-	if err := h.db.Table("coupons").Where("LOWER(code) = LOWER(?)", code).Delete(nil).Error; err != nil {
+	result := h.db.Table("coupons").Where("LOWER(code) = LOWER(?)", code).Delete(nil)
+	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete coupon"})
 		return
 	}
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "coupon not found"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"code": code, "deleted": true}})
+}
+
+type adminCouponResponse struct {
+	ID                int64      `json:"id" gorm:"column:id"`
+	Code              string     `json:"code" gorm:"column:code"`
+	Type              string     `json:"type" gorm:"column:type"`
+	Value             float64    `json:"value" gorm:"column:value"`
+	MinOrder          *float64   `json:"minOrder" gorm:"column:min_order"`
+	MaxDiscountAmount *float64   `json:"maxDiscountAmount" gorm:"column:max_discount_amount"`
+	UsageLimit        *int       `json:"usageLimit" gorm:"column:usage_limit"`
+	UsageCount        int        `json:"usageCount" gorm:"column:usage_count"`
+	StartsAt          *time.Time `json:"startsAt" gorm:"column:starts_at"`
+	ExpiresAt         *time.Time `json:"expiresAt" gorm:"column:expires_at"`
+	IsActive          bool       `json:"isActive" gorm:"column:is_active"`
+	CreatedAt         time.Time  `json:"createdAt" gorm:"column:created_at"`
+	UpdatedAt         time.Time  `json:"updatedAt" gorm:"column:updated_at"`
+}
+
+type adminCouponUpsertRequest struct {
+	Code              *string    `json:"code"`
+	Type              *string    `json:"type"`
+	Value             *float64   `json:"value"`
+	MinOrder          *float64   `json:"minOrder"`
+	MaxDiscountAmount *float64   `json:"maxDiscountAmount"`
+	UsageLimit        *int       `json:"usageLimit"`
+	StartsAt          *time.Time `json:"startsAt"`
+	ExpiresAt         *time.Time `json:"expiresAt"`
+	IsActive          *bool      `json:"isActive"`
+}
+
+func buildCouponPayload(req adminCouponUpsertRequest, create bool) (map[string]any, error) {
+	payload := map[string]any{}
+	if create {
+		if req.Code == nil || strings.TrimSpace(*req.Code) == "" {
+			return nil, fmt.Errorf("code is required")
+		}
+		if req.Type == nil || strings.TrimSpace(*req.Type) == "" {
+			return nil, fmt.Errorf("type is required")
+		}
+		if req.Value == nil {
+			return nil, fmt.Errorf("value is required")
+		}
+	}
+	if req.Code != nil && create {
+		payload["code"] = strings.ToUpper(strings.TrimSpace(*req.Code))
+	}
+	if req.Type != nil {
+		typ := strings.TrimSpace(*req.Type)
+		if !isValidCouponType(typ) {
+			return nil, fmt.Errorf("invalid type")
+		}
+		payload["type"] = typ
+	}
+	if req.Value != nil {
+		if *req.Value <= 0 {
+			return nil, fmt.Errorf("value must be greater than 0")
+		}
+		if req.Type != nil && strings.TrimSpace(*req.Type) == "percentage" && *req.Value > 100 {
+			return nil, fmt.Errorf("percentage value cannot exceed 100")
+		}
+		payload["value"] = *req.Value
+	}
+	if req.MinOrder != nil {
+		if *req.MinOrder < 0 {
+			return nil, fmt.Errorf("minOrder cannot be negative")
+		}
+		payload["min_order"] = *req.MinOrder
+	}
+	if req.MaxDiscountAmount != nil {
+		if *req.MaxDiscountAmount < 0 {
+			return nil, fmt.Errorf("maxDiscountAmount cannot be negative")
+		}
+		payload["max_discount_amount"] = *req.MaxDiscountAmount
+	}
+	if req.UsageLimit != nil {
+		if *req.UsageLimit < 0 {
+			return nil, fmt.Errorf("usageLimit cannot be negative")
+		}
+		payload["usage_limit"] = *req.UsageLimit
+	}
+	if req.StartsAt != nil {
+		payload["starts_at"] = *req.StartsAt
+	}
+	if req.ExpiresAt != nil {
+		payload["expires_at"] = *req.ExpiresAt
+	}
+	if req.StartsAt != nil && req.ExpiresAt != nil && req.ExpiresAt.Before(*req.StartsAt) {
+		return nil, fmt.Errorf("expiresAt must be after startsAt")
+	}
+	if req.IsActive != nil {
+		payload["is_active"] = *req.IsActive
+	}
+	return payload, nil
+}
+
+func isValidCouponType(typ string) bool {
+	switch typ {
+	case "percentage", "fixed":
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *Handler) AdminGetBotConfig(c *gin.Context) {

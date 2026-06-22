@@ -238,6 +238,65 @@
       ]
     },
     {
+      "name": "Admin Coupons",
+      "item": [
+        {
+          "name": "GET /api/admin/coupons",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/coupons?page=1&limit=20&code=WELCOME&type=percentage&isActive=true"
+          }
+        },
+        {
+          "name": "GET /api/admin/coupons/:code",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/coupons/{{couponCode}}"
+          }
+        },
+        {
+          "name": "POST /api/admin/coupons",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"WELCOME10\",\n  \"type\": \"percentage\",\n  \"value\": 10,\n  \"minOrder\": 100,\n  \"maxDiscountAmount\": 50,\n  \"usageLimit\": 500,\n  \"startsAt\": \"2026-05-10T00:00:00Z\",\n  \"expiresAt\": \"2026-06-10T00:00:00Z\",\n  \"isActive\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/admin/coupons"
+          }
+        },
+        {
+          "name": "PATCH /api/admin/coupons/:code",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"value\": 15,\n  \"maxDiscountAmount\": 75,\n  \"isActive\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/admin/coupons/{{couponCode}}"
+          }
+        },
+        {
+          "name": "DELETE /api/admin/coupons/:code",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/coupons/{{couponCode}}"
+          }
+        }
+      ]
+    },
+    {
       "name": "Admin Orders",
       "item": [
         {

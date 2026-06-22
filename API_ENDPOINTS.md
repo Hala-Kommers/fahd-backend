@@ -896,6 +896,158 @@ Response:
 }
 ```
 
+## Admin Coupons
+
+All admin coupon endpoints require `Authorization: Bearer <access_token>`.
+
+Coupon types are validated at the application level and must be `percentage` or `fixed`.
+
+### GET `/api/admin/coupons`
+
+Returns paginated coupons for admin coupon management.
+
+Query params:
+
+| Param | Type | Required | Description |
+| --- | --- | --- | --- |
+| `page` | number | No | Page number. Default: `1`. |
+| `limit` | number | No | Items per page. Default: `20`, max: `100`. |
+| `code` | string | No | Partial coupon code match. |
+| `type` | string | No | Filter by `percentage` or `fixed`. |
+| `isActive` | boolean | No | Filter active/inactive coupons. Accepts `true` or `false`. |
+| `search` | string | No | Backward-compatible partial code search. |
+
+Example:
+
+```http
+GET /api/admin/coupons?page=1&limit=20&code=WELCOME&type=percentage&isActive=true
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "code": "WELCOME10",
+      "type": "percentage",
+      "value": 10,
+      "minOrder": 100,
+      "maxDiscountAmount": 50,
+      "usageLimit": 500,
+      "usageCount": 12,
+      "startsAt": "2026-05-10T00:00:00Z",
+      "expiresAt": "2026-06-10T00:00:00Z",
+      "isActive": true,
+      "createdAt": "2026-05-10T10:00:00Z",
+      "updatedAt": "2026-05-10T10:00:00Z"
+    }
+  ],
+  "meta": {
+    "page": 1,
+    "limit": 20,
+    "total": 1,
+    "totalPages": 1
+  }
+}
+```
+
+### GET `/api/admin/coupons/:code`
+
+Returns one coupon by code. Code matching is case-insensitive.
+
+Response:
+
+```json
+{
+  "data": {
+    "id": 1,
+    "code": "WELCOME10",
+    "type": "percentage",
+    "value": 10,
+    "minOrder": 100,
+    "maxDiscountAmount": 50,
+    "usageLimit": 500,
+    "usageCount": 12,
+    "startsAt": "2026-05-10T00:00:00Z",
+    "expiresAt": "2026-06-10T00:00:00Z",
+    "isActive": true,
+    "createdAt": "2026-05-10T10:00:00Z",
+    "updatedAt": "2026-05-10T10:00:00Z"
+  }
+}
+```
+
+### POST `/api/admin/coupons`
+
+Creates a coupon. `code`, `type`, and `value` are required.
+
+Body fields:
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `code` | string | Yes | Unique coupon code. Stored uppercase. |
+| `type` | string | Yes | `percentage` or `fixed`. |
+| `value` | number | Yes | Discount value. Must be greater than `0`. Percentage cannot exceed `100`. |
+| `minOrder` | number | No | Minimum subtotal required. Must be non-negative. |
+| `maxDiscountAmount` | number | No | Maximum discount cap. Must be non-negative. Usually for percentage coupons. |
+| `usageLimit` | number | No | Maximum total redemptions. Must be non-negative. |
+| `startsAt` | string | No | ISO timestamp when coupon starts. |
+| `expiresAt` | string | No | ISO timestamp when coupon expires. Must be after `startsAt` when both are sent. |
+| `isActive` | boolean | No | Defaults to database default `true` when omitted. |
+
+Request:
+
+```json
+{
+  "code": "WELCOME10",
+  "type": "percentage",
+  "value": 10,
+  "minOrder": 100,
+  "maxDiscountAmount": 50,
+  "usageLimit": 500,
+  "startsAt": "2026-05-10T00:00:00Z",
+  "expiresAt": "2026-06-10T00:00:00Z",
+  "isActive": true
+}
+```
+
+Response: same shape as `GET /api/admin/coupons/:code` with status `201`.
+
+### PATCH `/api/admin/coupons/:code`
+
+Updates a coupon by code. Code matching is case-insensitive. The coupon `code` itself cannot be changed; create a new coupon if a new code is needed.
+
+Body: any subset of `type`, `value`, `minOrder`, `maxDiscountAmount`, `usageLimit`, `startsAt`, `expiresAt`, and `isActive`.
+
+Request:
+
+```json
+{
+  "value": 15,
+  "maxDiscountAmount": 75,
+  "isActive": true
+}
+```
+
+Response: same shape as `GET /api/admin/coupons/:code`.
+
+### DELETE `/api/admin/coupons/:code`
+
+Deletes a coupon by code. Code matching is case-insensitive.
+
+Response:
+
+```json
+{
+  "data": {
+    "code": "WELCOME10",
+    "deleted": true
+  }
+}
+```
+
 ## Admin Orders
 
 All admin order endpoints require `Authorization: Bearer <access_token>`.

@@ -63,6 +63,7 @@ func NewRouter(cfg config.Config, db *gorm.DB, wsHandler http.Handler) *gin.Engi
 	admin.GET("/orders/:id", handler.AdminGetOrder)
 	admin.PATCH("/orders/:id", handler.AdminUpdateOrder)
 	admin.GET("/coupons", handler.AdminListCoupons)
+	admin.GET("/coupons/:code", handler.AdminGetCoupon)
 	admin.POST("/coupons", handler.AdminCreateCoupon)
 	admin.PATCH("/coupons/:code", handler.AdminUpdateCoupon)
 	admin.DELETE("/coupons/:code", handler.AdminDeleteCoupon)
