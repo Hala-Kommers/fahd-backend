@@ -135,6 +135,8 @@ CREATE TABLE IF NOT EXISTS orders (
     currency TEXT NOT NULL DEFAULT 'SAR',
     coupon_code TEXT,
 
+    conversation_id BIGINT,
+
     customer_name TEXT NOT NULL,
     customer_phone TEXT NOT NULL,
     customer_email TEXT,
@@ -142,19 +144,7 @@ CREATE TABLE IF NOT EXISTS orders (
     address_raw TEXT NOT NULL,
     address_city TEXT NOT NULL,
     address_district TEXT,
-    address_street TEXT,
-    address_building_no TEXT,
-    address_landmark TEXT,
-    address_confidence NUMERIC(5,2) NOT NULL DEFAULT 0,
-
-    risk_score NUMERIC(5,2) NOT NULL DEFAULT 0,
-    risk_flags JSONB NOT NULL DEFAULT '[]'::jsonb,
-    otp_status TEXT NOT NULL DEFAULT 'none' CHECK (otp_status IN ('none', 'sent', 'verified')),
-
-    notes TEXT,
-    tags JSONB NOT NULL DEFAULT '[]'::jsonb,
-    activity_log JSONB NOT NULL DEFAULT '[]'::jsonb,
-    meta_json JSONB NOT NULL DEFAULT '{}'::jsonb
+    address_zone TEXT
 );
 
 CREATE TABLE IF NOT EXISTS order_items (
@@ -261,6 +251,10 @@ CREATE TABLE IF NOT EXISTS chat_order_drafts (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE orders
+    ADD CONSTRAINT fk_orders_conversation_id
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL;
+
 -- indexes
 CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
 CREATE INDEX IF NOT EXISTS idx_products_status ON products(status);
@@ -272,12 +266,14 @@ CREATE INDEX IF NOT EXISTS idx_pricing_tiers_product_id ON pricing_tiers(product
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_phone ON orders(customer_phone);
+CREATE INDEX IF NOT EXISTS idx_orders_conversation_id ON orders(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_coupons_code_active ON coupons(code, is_active);
 CREATE INDEX IF NOT EXISTS idx_conversations_last_message_at ON conversations(last_message_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_timestamp ON messages(conversation_id, timestamp DESC);
 
 -- +goose Down
+ALTER TABLE orders DROP CONSTRAINT IF EXISTS fk_orders_conversation_id;
 DROP TABLE IF EXISTS chat_order_drafts;
 DROP TABLE IF EXISTS settings;
 DROP TABLE IF EXISTS bot_config;

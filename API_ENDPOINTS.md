@@ -321,7 +321,9 @@ Body fields:
 | `customerPhone` | string | Yes | Customer phone. |
 | `customerEmail` | string | No | Customer email. |
 | `addressRaw` | string | Yes | Full address text. |
-| `cityId` | number | Yes | Selected city ID from `GET /api/cities`. |
+| `cityId` | number | Yes | Selected state/wilaya (`الولاية`) ID from `GET /api/cities`. |
+| `addressZone` | string | No | City (`المدينة`) inside the selected state/wilaya. |
+| `addressDistrict` | string | No | Neighborhood/district (`الحي`) inside the selected city. |
 | `couponCode` | string | No | Coupon code. |
 | `items` | array | Yes | Order items. |
 
@@ -343,6 +345,8 @@ Request:
   "customerEmail": "ahmed@example.com",
   "addressRaw": "Riyadh, Al Malqa",
   "cityId": 1,
+  "addressZone": "Al Malqa",
+  "addressDistrict": "Al Aqiq",
   "couponCode": "WELCOME10",
   "items": [
     { "productId": 1, "qty": 1 }
@@ -366,7 +370,10 @@ Response:
     "currency": "SAR",
     "customerName": "Ahmed",
     "customerPhone": "+966500000000",
-    "addressRaw": "Riyadh, Al Malqa"
+    "addressRaw": "Riyadh, Al Malqa",
+    "cityId": 1,
+    "addressZone": "Al Malqa",
+    "addressDistrict": "Al Aqiq"
   }
 }
 ```
@@ -460,7 +467,7 @@ The optional `context` object tells the AI about the customer's current page/sel
 | --- | --- | --- |
 | `productId` | number | The product the customer is currently viewing. AI uses this ID directly in tool calls without asking. |
 | `variantId` | number | The selected product variant (if applicable). |
-| `cityId` | number | The city selected by the customer from the checkout dropdown. AI uses this when creating orders without asking for the city. |
+| `cityId` | number | The state/wilaya (`الولاية`) selected by the customer from the checkout dropdown. AI uses this when creating orders without asking for the state/wilaya. |
 
 Backend acknowledges immediately:
 ```json
@@ -1165,6 +1172,8 @@ Response:
         "customerPhone": "+966500000000",
         "addressRaw": "Riyadh, Al Malqa",
         "cityId": 1,
+        "addressZone": "Al Malqa",
+        "addressDistrict": "Al Aqiq",
         "paymentMethod": "cod"
       },
       "toolResult": "{\"orderId\":12,\"orderNumber\":\"ORD-1710000000000000000\",\"status\":\"new\",...}",

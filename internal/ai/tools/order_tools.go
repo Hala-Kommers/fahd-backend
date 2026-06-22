@@ -38,13 +38,15 @@ func (t *CreateOrderTool) Definition() ai.ToolDefinition {
 						"required": []string{"productId", "qty"},
 					},
 				},
-				"customerName":  map[string]any{"type": "string", "description": "Full customer name."},
-				"customerPhone": map[string]any{"type": "string", "description": "Customer phone number."},
-				"customerEmail": map[string]any{"type": "string", "description": "Optional customer email."},
-				"addressRaw":    map[string]any{"type": "string", "description": "Full delivery address."},
-				"cityId":        map[string]any{"type": "integer", "description": "City ID from the store cities list."},
-				"paymentMethod": map[string]any{"type": "string", "description": "Payment method: 'cod' or 'paymob'.", "enum": []string{"cod", "paymob"}},
-				"couponCode":    map[string]any{"type": "string", "description": "Optional coupon code."},
+				"customerName":    map[string]any{"type": "string", "description": "Full customer name."},
+				"customerPhone":   map[string]any{"type": "string", "description": "Customer phone number."},
+				"customerEmail":   map[string]any{"type": "string", "description": "Optional customer email."},
+				"addressRaw":      map[string]any{"type": "string", "description": "Full delivery address."},
+				"addressZone":     map[string]any{"type": "string", "description": "Optional city within the selected state/wilaya."},
+				"addressDistrict": map[string]any{"type": "string", "description": "Optional neighborhood/district within the selected city."},
+				"cityId":          map[string]any{"type": "integer", "description": "City ID from the store cities list."},
+				"paymentMethod":   map[string]any{"type": "string", "description": "Payment method: 'cod' or 'paymob'.", "enum": []string{"cod", "paymob"}},
+				"couponCode":      map[string]any{"type": "string", "description": "Optional coupon code."},
 			},
 		},
 	}
@@ -62,14 +64,17 @@ func (t *CreateOrderTool) Execute(ctx context.Context, arguments map[string]any)
 	}
 
 	input := services.CreateOrderInput{
-		Items:         items,
-		CustomerName:  stringArg(arguments, "customerName"),
-		CustomerPhone: stringArg(arguments, "customerPhone"),
-		CustomerEmail: stringArg(arguments, "customerEmail"),
-		AddressRaw:    stringArg(arguments, "addressRaw"),
-		CityID:        int64Arg(arguments, "cityId"),
-		PaymentMethod: stringArg(arguments, "paymentMethod"),
-		CouponCode:    stringArg(arguments, "couponCode"),
+		Items:           items,
+		CustomerName:    stringArg(arguments, "customerName"),
+		CustomerPhone:   stringArg(arguments, "customerPhone"),
+		CustomerEmail:   stringArg(arguments, "customerEmail"),
+		AddressRaw:      stringArg(arguments, "addressRaw"),
+		AddressZone:     stringPtrArg(arguments, "addressZone"),
+		AddressDistrict: stringPtrArg(arguments, "addressDistrict"),
+		CityID:          int64Arg(arguments, "cityId"),
+		ConversationID:  int64Arg(arguments, "conversationId"),
+		PaymentMethod:   stringArg(arguments, "paymentMethod"),
+		CouponCode:      stringArg(arguments, "couponCode"),
 	}
 
 	data, err := t.orders.Create(ctx, input)

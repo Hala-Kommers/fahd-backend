@@ -282,14 +282,16 @@ func (h *Handler) ValidateCoupon(c *gin.Context) {
 }
 
 type createOrderRequest struct {
-	PaymentMethod string             `json:"paymentMethod"`
-	CustomerName  string             `json:"customerName"`
-	CustomerPhone string             `json:"customerPhone"`
-	CustomerEmail string             `json:"customerEmail"`
-	AddressRaw    string             `json:"addressRaw"`
-	CityID        int64              `json:"cityId"`
-	CouponCode    string             `json:"couponCode"`
-	Items         []createOrderItem  `json:"items"`
+	PaymentMethod   string            `json:"paymentMethod"`
+	CustomerName    string            `json:"customerName"`
+	CustomerPhone   string            `json:"customerPhone"`
+	CustomerEmail   string            `json:"customerEmail"`
+	AddressRaw      string            `json:"addressRaw"`
+	CityID          int64             `json:"cityId"`
+	AddressZone     *string           `json:"addressZone"`
+	AddressDistrict *string           `json:"addressDistrict"`
+	CouponCode      string            `json:"couponCode"`
+	Items           []createOrderItem `json:"items"`
 }
 
 type createOrderItem struct {
@@ -435,20 +437,24 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		discount = subtotal
 	}
 	grandTotal := roundMoney(subtotal + shipping - discount)
+	addressZone := normalizedOptionalString(req.AddressZone)
+	addressDistrict := normalizedOptionalString(req.AddressDistrict)
 
 	order := Order{
-		OrderNumber:   fmt.Sprintf("ORD-%d", time.Now().UnixNano()),
-		Status:        "new",
-		PaymentMethod: paymentMethod,
-		Subtotal:      subtotal,
-		Shipping:      shipping,
-		Discount:      discount,
-		GrandTotal:    grandTotal,
-		Currency:      "SAR",
-		CustomerName:  req.CustomerName,
-		CustomerPhone: req.CustomerPhone,
-		AddressRaw:    req.AddressRaw,
-		CityID:        &req.CityID,
+		OrderNumber:     fmt.Sprintf("ORD-%d", time.Now().UnixNano()),
+		Status:          "new",
+		PaymentMethod:   paymentMethod,
+		Subtotal:        subtotal,
+		Shipping:        shipping,
+		Discount:        discount,
+		GrandTotal:      grandTotal,
+		Currency:        "SAR",
+		CustomerName:    req.CustomerName,
+		CustomerPhone:   req.CustomerPhone,
+		AddressRaw:      req.AddressRaw,
+		CityID:          &req.CityID,
+		AddressZone:     addressZone,
+		AddressDistrict: addressDistrict,
 	}
 
 	tx := h.db.Begin()
@@ -463,22 +469,23 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	}()
 
 	if err := tx.Table("orders").Create(&map[string]any{
-		"order_number":      order.OrderNumber,
-		"status":            order.Status,
-		"payment_method":    order.PaymentMethod,
-		"payment_status":    "pending",
-		"subtotal":          order.Subtotal,
-		"shipping":          order.Shipping,
-		"discount":          order.Discount,
-		"grand_total":       order.GrandTotal,
-		"currency":          order.Currency,
-		"coupon_code":       strings.TrimSpace(req.CouponCode),
-		"customer_name":     req.CustomerName,
-		"customer_phone":    req.CustomerPhone,
-		"customer_email":    strings.TrimSpace(req.CustomerEmail),
-		"address_raw":       req.AddressRaw,
-		"city_id":           req.CityID,
-		"address_confidence": 0,
+		"order_number":     order.OrderNumber,
+		"status":           order.Status,
+		"payment_method":   order.PaymentMethod,
+		"payment_status":   "pending",
+		"subtotal":         order.Subtotal,
+		"shipping":         order.Shipping,
+		"discount":         order.Discount,
+		"grand_total":      order.GrandTotal,
+		"currency":         order.Currency,
+		"coupon_code":      strings.TrimSpace(req.CouponCode),
+		"customer_name":    req.CustomerName,
+		"customer_phone":   req.CustomerPhone,
+		"customer_email":   strings.TrimSpace(req.CustomerEmail),
+		"address_raw":      req.AddressRaw,
+		"city_id":          req.CityID,
+		"address_zone":     addressZone,
+		"address_district": addressDistrict,
 	}).Error; err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create order"})
@@ -494,13 +501,13 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 
 	for _, item := range pricedItems {
 		payload := map[string]any{
-			"order_id":    created.ID,
-			"product_id":  item.ProductID,
-			"sku":         item.SKU,
-			"title":       item.Title,
-			"qty":         item.Qty,
-			"unit_price":  item.UnitPrice,
-			"line_total":  item.LineTotal,
+			"order_id":   created.ID,
+			"product_id": item.ProductID,
+			"sku":        item.SKU,
+			"title":      item.Title,
+			"qty":        item.Qty,
+			"unit_price": item.UnitPrice,
+			"line_total": item.LineTotal,
 		}
 		if item.VariantID != nil {
 			payload["variant_id"] = *item.VariantID
@@ -526,6 +533,17 @@ func roundMoney(value float64) float64 {
 	return math.Round(value*100) / 100
 }
 
+func normalizedOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
 func (h *Handler) GetOrder(c *gin.Context) {
 	id := c.Param("id")
 	var order Order
@@ -540,5 +558,3 @@ func (h *Handler) GetOrder(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"data": order})
 }
-
-

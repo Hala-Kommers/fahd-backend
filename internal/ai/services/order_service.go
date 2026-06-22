@@ -17,14 +17,17 @@ type OrderItemInput struct {
 }
 
 type CreateOrderInput struct {
-	Items         []OrderItemInput `json:"items"`
-	CustomerName  string           `json:"customerName"`
-	CustomerPhone string           `json:"customerPhone"`
-	CustomerEmail string           `json:"customerEmail"`
-	AddressRaw    string           `json:"addressRaw"`
-	CityID        int64            `json:"cityId"`
-	PaymentMethod string           `json:"paymentMethod"`
-	CouponCode    string           `json:"couponCode"`
+	Items           []OrderItemInput `json:"items"`
+	ConversationID  int64            `json:"conversationId"`
+	CustomerName    string           `json:"customerName"`
+	CustomerPhone   string           `json:"customerPhone"`
+	CustomerEmail   string           `json:"customerEmail"`
+	AddressRaw      string           `json:"addressRaw"`
+	AddressZone     *string          `json:"addressZone"`
+	AddressDistrict *string          `json:"addressDistrict"`
+	CityID          int64            `json:"cityId"`
+	PaymentMethod   string           `json:"paymentMethod"`
+	CouponCode      string           `json:"couponCode"`
 }
 
 type OrderService struct {
@@ -168,41 +171,51 @@ func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[
 	}()
 
 	type orderRow struct {
-		OrderNumber      string  `gorm:"column:order_number"`
-		Status           string  `gorm:"column:status"`
-		PaymentMethod    string  `gorm:"column:payment_method"`
-		PaymentStatus    string  `gorm:"column:payment_status"`
-		Subtotal         float64 `gorm:"column:subtotal"`
-		Shipping         float64 `gorm:"column:shipping"`
-		Discount         float64 `gorm:"column:discount"`
-		GrandTotal       float64 `gorm:"column:grand_total"`
-		Currency         string  `gorm:"column:currency"`
-		CouponCode       string  `gorm:"column:coupon_code"`
-		CustomerName     string  `gorm:"column:customer_name"`
-		CustomerPhone    string  `gorm:"column:customer_phone"`
-		CustomerEmail    string  `gorm:"column:customer_email"`
-		AddressRaw       string  `gorm:"column:address_raw"`
-		CityID           int64   `gorm:"column:city_id"`
-		AddressConfidence int    `gorm:"column:address_confidence"`
+		OrderNumber     string  `gorm:"column:order_number"`
+		ConversationID  *int64  `gorm:"column:conversation_id"`
+		Status          string  `gorm:"column:status"`
+		PaymentMethod   string  `gorm:"column:payment_method"`
+		PaymentStatus   string  `gorm:"column:payment_status"`
+		Subtotal        float64 `gorm:"column:subtotal"`
+		Shipping        float64 `gorm:"column:shipping"`
+		Discount        float64 `gorm:"column:discount"`
+		GrandTotal      float64 `gorm:"column:grand_total"`
+		Currency        string  `gorm:"column:currency"`
+		CouponCode      string  `gorm:"column:coupon_code"`
+		CustomerName    string  `gorm:"column:customer_name"`
+		CustomerPhone   string  `gorm:"column:customer_phone"`
+		CustomerEmail   string  `gorm:"column:customer_email"`
+		AddressRaw      string  `gorm:"column:address_raw"`
+		CityID          int64   `gorm:"column:city_id"`
+		AddressZone     *string `gorm:"column:address_zone"`
+		AddressDistrict *string `gorm:"column:address_district"`
 	}
+	var conversationID *int64
+	if input.ConversationID > 0 {
+		conversationID = &input.ConversationID
+	}
+	addressZone := normalizedOptionalString(input.AddressZone)
+	addressDistrict := normalizedOptionalString(input.AddressDistrict)
 
 	if err := tx.Table("orders").Create(&orderRow{
-		OrderNumber:       orderNumber,
-		Status:            "new",
-		PaymentMethod:     paymentMethod,
-		PaymentStatus:     "pending",
-		Subtotal:          subtotal,
-		Shipping:          shipping,
-		Discount:          discount,
-		GrandTotal:        grandTotal,
-		Currency:          "SAR",
-		CouponCode:        strings.TrimSpace(input.CouponCode),
-		CustomerName:      input.CustomerName,
-		CustomerPhone:     input.CustomerPhone,
-		CustomerEmail:     strings.TrimSpace(input.CustomerEmail),
-		AddressRaw:        input.AddressRaw,
-		CityID:            input.CityID,
-		AddressConfidence: 0,
+		OrderNumber:     orderNumber,
+		ConversationID:  conversationID,
+		Status:          "new",
+		PaymentMethod:   paymentMethod,
+		PaymentStatus:   "pending",
+		Subtotal:        subtotal,
+		Shipping:        shipping,
+		Discount:        discount,
+		GrandTotal:      grandTotal,
+		Currency:        "SAR",
+		CouponCode:      strings.TrimSpace(input.CouponCode),
+		CustomerName:    input.CustomerName,
+		CustomerPhone:   input.CustomerPhone,
+		CustomerEmail:   strings.TrimSpace(input.CustomerEmail),
+		AddressRaw:      input.AddressRaw,
+		CityID:          input.CityID,
+		AddressZone:     addressZone,
+		AddressDistrict: addressDistrict,
 	}).Error; err != nil {
 		return nil, fmt.Errorf("create order: %w", err)
 	}
@@ -248,20 +261,34 @@ func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[
 	}
 
 	return map[string]any{
-		"orderId":     orderID,
-		"orderNumber": orderNumber,
-		"status":      "new",
-		"items":       itemsJSON,
-		"subtotal":    subtotal,
-		"shipping":    shipping,
-		"discount":    discount,
-		"grandTotal":  grandTotal,
-		"currency":    "SAR",
-		"paymentMethod": paymentMethod,
-		"customerName":  input.CustomerName,
-		"customerPhone": input.CustomerPhone,
-		"city":          city.Name,
+		"orderId":         orderID,
+		"orderNumber":     orderNumber,
+		"status":          "new",
+		"items":           itemsJSON,
+		"subtotal":        subtotal,
+		"shipping":        shipping,
+		"discount":        discount,
+		"grandTotal":      grandTotal,
+		"currency":        "SAR",
+		"conversationId":  input.ConversationID,
+		"paymentMethod":   paymentMethod,
+		"customerName":    input.CustomerName,
+		"customerPhone":   input.CustomerPhone,
+		"city":            city.Name,
+		"addressZone":     addressZone,
+		"addressDistrict": addressDistrict,
 	}, nil
+}
+
+func normalizedOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func (s *OrderService) CalculateTotal(ctx context.Context, input CreateOrderInput) (map[string]any, error) {

@@ -225,6 +225,12 @@ func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (Messag
 				continue
 			}
 
+			if call.Name == "create_order" {
+				if call.Arguments == nil {
+					call.Arguments = map[string]any{}
+				}
+				call.Arguments["conversationId"] = conversationID
+			}
 			result, execErr := tool.Execute(ctx, call.Arguments)
 			if execErr != nil {
 				slog.Error("sales assistant tool execution failed", "conversation_id", conversationID, "tool", call.Name, "error", execErr)

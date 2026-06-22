@@ -21,6 +21,14 @@ func stringArg(args map[string]any, key string) string {
 	return ""
 }
 
+func stringPtrArg(args map[string]any, key string) *string {
+	if value, ok := args[key]; ok && value != nil {
+		result := fmt.Sprint(value)
+		return &result
+	}
+	return nil
+}
+
 func intArg(args map[string]any, key string) int {
 	if value, ok := args[key]; ok && value != nil {
 		switch v := value.(type) {

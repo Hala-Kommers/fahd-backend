@@ -15,15 +15,15 @@ import (
 )
 
 type adminProductUpsertRequest struct {
-	Title            string  `json:"title"`
-	Slug             string  `json:"slug"`
-	SKU              string  `json:"sku"`
-	Status           string  `json:"status"`
-	Category         struct {
+	Title    string `json:"title"`
+	Slug     string `json:"slug"`
+	SKU      string `json:"sku"`
+	Status   string `json:"status"`
+	Category struct {
 		ID *int64 `json:"id"`
 	} `json:"category"`
-	DescriptionShort string  `json:"descriptionShort"`
-	DescriptionLong  string  `json:"descriptionLong"`
+	DescriptionShort string `json:"descriptionShort"`
+	DescriptionLong  string `json:"descriptionLong"`
 	Pricing          struct {
 		Cost      *float64 `json:"cost"`
 		Price     float64  `json:"price"`
@@ -35,22 +35,22 @@ type adminProductUpsertRequest struct {
 		StockTotal        int    `json:"stockTotal"`
 		LowStockThreshold int    `json:"lowStockThreshold"`
 	} `json:"inventory"`
-	IsFeatured        bool                   `json:"isFeatured"`
-	HasVariants       bool                   `json:"hasVariants"`
-	VariantOptions    []any                  `json:"variantOptions"`
-	Specs             []map[string]any       `json:"specs"`
-	FAQ               []map[string]any       `json:"faq"`
-	UsageInstructions *string                `json:"usageInstructions"`
-	PricingTiers      []adminPricingTierReq  `json:"pricingTiers"`
-	Images            []adminImageReq        `json:"images"`
-	Variants          []adminVariantReq      `json:"variants"`
+	IsFeatured        bool                  `json:"isFeatured"`
+	HasVariants       bool                  `json:"hasVariants"`
+	VariantOptions    []any                 `json:"variantOptions"`
+	Specs             []map[string]any      `json:"specs"`
+	FAQ               []map[string]any      `json:"faq"`
+	UsageInstructions *string               `json:"usageInstructions"`
+	PricingTiers      []adminPricingTierReq `json:"pricingTiers"`
+	Images            []adminImageReq       `json:"images"`
+	Variants          []adminVariantReq     `json:"variants"`
 }
 
 type adminPricingTierReq struct {
-	Qty           int      `json:"qty"`
-	Label         *string  `json:"label"`
-	OriginalPrice float64  `json:"originalPrice"`
-	FinalPrice    float64  `json:"finalPrice"`
+	Qty           int     `json:"qty"`
+	Label         *string `json:"label"`
+	OriginalPrice float64 `json:"originalPrice"`
+	FinalPrice    float64 `json:"finalPrice"`
 }
 
 type adminImageReq struct {
@@ -70,14 +70,14 @@ type adminVariantReq struct {
 
 func (h *Handler) AdminListProducts(c *gin.Context) {
 	type adminProductListItem struct {
-		ID            int64    `json:"id"`
-		Title         string   `json:"title"`
-		IsActive      bool     `json:"isActive"`
-		CategoryName  *string  `json:"categoryName"`
-		SKU           string   `json:"sku"`
-		Price         float64  `json:"price"`
-		StockTotal    int      `json:"stockTotal"`
-		PrimaryImage  *string  `json:"primaryImage"`
+		ID           int64   `json:"id"`
+		Title        string  `json:"title"`
+		IsActive     bool    `json:"isActive"`
+		CategoryName *string `json:"categoryName"`
+		SKU          string  `json:"sku"`
+		Price        float64 `json:"price"`
+		StockTotal   int     `json:"stockTotal"`
+		PrimaryImage *string `json:"primaryImage"`
 	}
 
 	var rows []adminProductListItem
@@ -427,11 +427,11 @@ func upsertProductChildren(tx *gorm.DB, productID int64, req adminProductUpsertR
 	}
 	for _, tier := range req.PricingTiers {
 		row := map[string]any{
-			"product_id":      productID,
-			"qty":             tier.Qty,
-			"label":           tier.Label,
-			"original_price":  tier.OriginalPrice,
-			"final_price":     tier.FinalPrice,
+			"product_id":     productID,
+			"qty":            tier.Qty,
+			"label":          tier.Label,
+			"original_price": tier.OriginalPrice,
+			"final_price":    tier.FinalPrice,
 		}
 		if err := tx.Table("pricing_tiers").Create(&row).Error; err != nil {
 			return fmt.Errorf("failed to save pricing tiers")
@@ -447,10 +447,10 @@ func upsertProductChildren(tx *gorm.DB, productID int64, req adminProductUpsertR
 			sortOrder = i
 		}
 		row := map[string]any{
-			"product_id":  productID,
-			"url":         strings.TrimSpace(image.URL),
-			"is_primary":  image.IsPrimary,
-			"sort_order":  sortOrder,
+			"product_id": productID,
+			"url":        strings.TrimSpace(image.URL),
+			"is_primary": image.IsPrimary,
+			"sort_order": sortOrder,
 		}
 		if err := tx.Table("product_images").Create(&row).Error; err != nil {
 			return fmt.Errorf("failed to save images")
@@ -467,13 +467,13 @@ func upsertProductChildren(tx *gorm.DB, productID int64, req adminProductUpsertR
 			isActive = *variant.IsActive
 		}
 		row := map[string]any{
-			"product_id":      productID,
-			"sku":             strings.TrimSpace(variant.SKU),
-			"attributes":      attributesJSON,
-			"price_override":  variant.PriceOverride,
-			"stock":           variant.Stock,
-			"image":           variant.Image,
-			"is_active":       isActive,
+			"product_id":     productID,
+			"sku":            strings.TrimSpace(variant.SKU),
+			"attributes":     attributesJSON,
+			"price_override": variant.PriceOverride,
+			"stock":          variant.Stock,
+			"image":          variant.Image,
+			"is_active":      isActive,
 		}
 		if err := tx.Table("product_variants").Create(&row).Error; err != nil {
 			return fmt.Errorf("failed to save variants")
@@ -485,17 +485,18 @@ func upsertProductChildren(tx *gorm.DB, productID int64, req adminProductUpsertR
 
 func (h *Handler) AdminListOrders(c *gin.Context) {
 	type adminOrderListItem struct {
-		ID                int64   `json:"id"`
-		OrderNumber       string  `json:"orderNumber"`
-		CreatedAt         time.Time `json:"createdAt"`
-		CustomerName      string  `json:"customerName"`
-		CustomerPhone     string  `json:"customerPhone"`
-		AddressCity       string  `json:"addressCity"`
-		Total             float64 `json:"total"`
-		PaymentMethod     string  `json:"paymentMethod"`
-		Status            string  `json:"status"`
-		AddressConfidence float64 `json:"confidence"`
-		RiskScore         float64 `json:"risk"`
+		ID              int64     `json:"id"`
+		OrderNumber     string    `json:"orderNumber"`
+		ConversationID  *int64    `json:"conversationId"`
+		CreatedAt       time.Time `json:"createdAt"`
+		CustomerName    string    `json:"customerName"`
+		CustomerPhone   string    `json:"customerPhone"`
+		AddressCity     string    `json:"addressCity"`
+		AddressZone     *string   `json:"addressZone"`
+		AddressDistrict *string   `json:"addressDistrict"`
+		Total           float64   `json:"total"`
+		PaymentMethod   string    `json:"paymentMethod"`
+		Status          string    `json:"status"`
 	}
 
 	page := 1
@@ -519,7 +520,7 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 
 	var rows []adminOrderListItem
 	q := h.db.Table("orders o").
-		Select("o.id, o.order_number, o.created_at, o.customer_name, o.customer_phone, c.name AS address_city, o.grand_total AS total, o.payment_method, o.status, o.address_confidence, o.risk_score").
+		Select("o.id, o.order_number, o.conversation_id, o.created_at, o.customer_name, o.customer_phone, c.name AS address_city, o.address_zone, o.address_district, o.grand_total AS total, o.payment_method, o.status").
 		Joins("LEFT JOIN cities c ON c.id = o.city_id").
 		Order("created_at DESC")
 
@@ -780,9 +781,9 @@ func (h *Handler) AdminAIStats(c *gin.Context) {
 	_ = h.db.Raw(usageQ+dateFilter, usageArgs...).Scan(&usage).Error
 
 	type providerStat struct {
-		Provider        string `json:"provider"`
-		TotalMessages   int64  `json:"totalMessages"`
-		PromptTokens    int64  `json:"promptTokens"`
+		Provider         string `json:"provider"`
+		TotalMessages    int64  `json:"totalMessages"`
+		PromptTokens     int64  `json:"promptTokens"`
 		CompletionTokens int64  `json:"completionTokens"`
 	}
 	var byProvider []providerStat
@@ -798,9 +799,9 @@ func (h *Handler) AdminAIStats(c *gin.Context) {
 	`).Scan(&byProvider).Error
 
 	type modelStat struct {
-		Model           string `json:"model"`
-		TotalMessages   int64  `json:"totalMessages"`
-		PromptTokens    int64  `json:"promptTokens"`
+		Model            string `json:"model"`
+		TotalMessages    int64  `json:"totalMessages"`
+		PromptTokens     int64  `json:"promptTokens"`
 		CompletionTokens int64  `json:"completionTokens"`
 	}
 	var byModel []modelStat
@@ -816,8 +817,8 @@ func (h *Handler) AdminAIStats(c *gin.Context) {
 	`).Scan(&byModel).Error
 
 	type statusStat struct {
-		Status           string `json:"status"`
-		TotalConversations int64 `json:"totalConversations"`
+		Status             string `json:"status"`
+		TotalConversations int64  `json:"totalConversations"`
 	}
 	var byStatus []statusStat
 	_ = h.db.Table("conversations").
