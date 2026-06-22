@@ -902,6 +902,8 @@ All admin coupon endpoints require `Authorization: Bearer <access_token>`.
 
 Coupon types are validated at the application level and must be `percentage` or `fixed`.
 
+Create and update requests must use the documented camelCase JSON fields. Unknown fields are rejected with `400`.
+
 ### GET `/api/admin/coupons`
 
 Returns paginated coupons for admin coupon management.

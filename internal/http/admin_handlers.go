@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -837,9 +838,9 @@ func (h *Handler) AdminGetCoupon(c *gin.Context) {
 }
 
 func (h *Handler) AdminCreateCoupon(c *gin.Context) {
-	var req adminCouponUpsertRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid coupon payload"})
+	req, err := bindAdminCouponRequest(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	payload, err := buildCouponPayload(req, true)
@@ -861,9 +862,9 @@ func (h *Handler) AdminCreateCoupon(c *gin.Context) {
 
 func (h *Handler) AdminUpdateCoupon(c *gin.Context) {
 	code := c.Param("code")
-	var req adminCouponUpsertRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid coupon payload"})
+	req, err := bindAdminCouponRequest(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	payload, err := buildCouponPayload(req, false)
@@ -933,6 +934,20 @@ type adminCouponUpsertRequest struct {
 	StartsAt          *time.Time `json:"startsAt"`
 	ExpiresAt         *time.Time `json:"expiresAt"`
 	IsActive          *bool      `json:"isActive"`
+}
+
+func bindAdminCouponRequest(c *gin.Context) (adminCouponUpsertRequest, error) {
+	var req adminCouponUpsertRequest
+	body, err := c.GetRawData()
+	if err != nil {
+		return req, fmt.Errorf("invalid coupon payload")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		return req, fmt.Errorf("invalid coupon payload: use documented camelCase fields only")
+	}
+	return req, nil
 }
 
 func buildCouponPayload(req adminCouponUpsertRequest, create bool) (map[string]any, error) {
