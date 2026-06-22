@@ -277,6 +277,79 @@
           }
         }
       ]
+    },
+    {
+      "name": "Admin AI & Conversations",
+      "item": [
+        {
+          "name": "GET /api/admin/bot/config",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/bot/config"
+          }
+        },
+        {
+          "name": "PATCH /api/admin/bot/config",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\n  \"provider\": \"google\",\n  \"model\": \"gemini-2.0-flash\",\n  \"temperature\": 0.7,\n  \"maxTokens\": 1000,\n  \"enabled\": true,\n  \"persona\": {\"tone\": \"friendly_saudi\", \"style\": \"concise\", \"botName\": \"فهد\", \"language\": \"ar-SA\", \"emojiLevel\": \"medium\"},\n  \"customInstructions\": \"Answer in Arabic only.\"\n}" },
+            "url": "{{baseUrl}}/api/admin/bot/config"
+          }
+        },
+        {
+          "name": "POST /api/admin/bot/test-connection",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/bot/test-connection"
+          }
+        },
+        {
+          "name": "GET /api/admin/ai/stats",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/ai/stats?from=2026-05-01T00:00:00Z&to=2026-05-31T23:59:59Z&provider=google&model=gemini-2.0-flash"
+          }
+        },
+        {
+          "name": "GET /api/admin/conversations",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/conversations?page=1&limit=20&status=active"
+          }
+        },
+        {
+          "name": "GET /api/admin/conversations/:id",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/conversations/{{conversationId}}"
+          }
+        },
+        {
+          "name": "GET /api/admin/conversations/:id/messages",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/conversations/{{conversationId}}/messages?page=1&limit=50&role=assistant"
+          }
+        },
+        {
+          "name": "POST /api/admin/conversations/:id/close",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/conversations/{{conversationId}}/close"
+          }
+        }
+      ]
     }
   ]
 }

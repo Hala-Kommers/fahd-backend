@@ -1080,9 +1080,38 @@ Response:
 
 All admin AI and conversation endpoints require `Authorization: Bearer <access_token>`.
 
+All paginated endpoints return:
+
+```json
+{
+  "data": [],
+  "meta": { "page": 1, "limit": 20, "total": 0, "totalPages": 0 }
+}
+```
+
+Conversation statuses are `active`, `closed`, or `archived`.
+
+Message roles are `user`, `assistant`, `admin`, `system`, or `tool` depending on source.
+
 ### GET `/api/admin/bot/config`
 
-Returns the bot configuration. The `apiKey` value is never returned — instead a `hasApiKey` boolean indicates whether a key is stored.
+Returns the latest bot configuration. The stored API key is never returned; use `hasApiKey` to know if one exists.
+
+Response fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | number | Config row ID. |
+| `provider` | string | AI provider, currently expected to be `google`. |
+| `model` | string | Provider model name. |
+| `hasApiKey` | boolean | Whether an API key is stored. |
+| `temperature` | number | Generation temperature. |
+| `maxTokens` | number | Max model output tokens. |
+| `enabled` | boolean | Whether the assistant is enabled. |
+| `persona` | object | Persona settings used by the prompt builder. |
+| `customInstructions` | string/null | Extra instructions appended to the assistant behavior. |
+| `createdAt` | string | ISO timestamp. |
+| `updatedAt` | string | ISO timestamp. |
 
 Response:
 
@@ -1097,7 +1126,9 @@ Response:
     "maxTokens": 1000,
     "enabled": true,
     "persona": {"tone": "friendly_saudi", "style": "concise", "botName": "فهد", "language": "ar-SA", "emojiLevel": "medium"},
-    "customInstructions": "Some custom instructions here"
+    "customInstructions": "Answer in Arabic only.",
+    "createdAt": "2026-05-10T10:00:00Z",
+    "updatedAt": "2026-05-10T10:00:00Z"
   }
 }
 ```
@@ -1109,7 +1140,7 @@ If no config exists yet:
 
 ### PATCH `/api/admin/bot/config`
 
-Updates bot configuration fields. Only the fields included in the request body are updated.
+Updates bot configuration fields. Only send fields that should change.
 
 When sending a new API key, it is encrypted before storage and never returned in responses.
 If `apiKey` is set to an empty string, the stored key is cleared.
@@ -1127,6 +1158,8 @@ Body (all fields optional):
 | `persona` | object | JSON persona settings (tone, style, botName, language, emojiLevel). |
 | `customInstructions` | string | Custom instructions appended to the AI system prompt. |
 | `apiKey` | string | API key for the AI provider. Encrypted before storage. Send `""` to clear. |
+
+Do not send unknown fields. The backend maps `maxTokens` to `max_tokens` and `customInstructions` to `custom_instructions` internally.
 
 Request:
 
@@ -1155,7 +1188,7 @@ Response:
 
 ### POST `/api/admin/bot/test-connection`
 
-Tests the AI provider connection using the stored config.
+Returns a lightweight provider check for the currently stored config. This endpoint currently confirms which provider will be used; it does not send a live model prompt.
 
 Response:
 
@@ -1170,7 +1203,7 @@ Response:
 
 ### GET `/api/admin/ai/stats`
 
-Aggregated AI usage statistics with optional filters and breakdowns.
+Aggregated AI usage statistics with optional filters and breakdowns. Filters apply consistently to message totals, distinct conversation totals, usage sums, provider/model breakdowns, and conversation status breakdowns.
 
 Query params:
 
@@ -1180,6 +1213,12 @@ Query params:
 | `to` | string | No | End date (ISO 8601) to filter message usage. |
 | `provider` | string | No | Filter usage by provider name (e.g. `google`). |
 | `model` | string | No | Filter usage by model name (e.g. `gemini-2.0-flash`). |
+
+Example:
+
+```http
+GET /api/admin/ai/stats?from=2026-05-01T00:00:00Z&to=2026-05-31T23:59:59Z&provider=google&model=gemini-2.0-flash
+```
 
 Response:
 
@@ -1209,63 +1248,9 @@ Response:
 }
 ```
 
-### GET `/api/admin/ai/tool-calls`
-
-Paginated tool call history across all conversations. Each tool call is expanded into its own entry with parsed arguments and results.
-
-Query params:
-
-| Param | Type | Required | Description |
-| --- | --- | --- | --- |
-| `page` | number | No | Page number. Default: `1`. |
-| `limit` | number | No | Items per page. Default: `50`, max: `200`. |
-| `conversationId` | number | No | Filter by conversation ID. |
-| `toolName` | string | No | Search tool calls by tool name (partial match). |
-| `from` | string | No | Start date (ISO 8601). |
-| `to` | string | No | End date (ISO 8601). |
-
-Example:
-
-```http
-GET /api/admin/ai/tool-calls?page=1&limit=20&toolName=create_order
-```
-
-Response:
-
-```json
-{
-  "data": [
-    {
-      "messageId": 15,
-      "conversationId": 3,
-      "toolName": "create_order",
-      "arguments": {
-        "items": [{ "productId": 1, "qty": 1 }],
-        "customerName": "Ahmed",
-        "customerPhone": "+966500000000",
-        "addressRaw": "Riyadh, Al Malqa",
-        "cityId": 1,
-        "addressZone": "Al Malqa",
-        "addressDistrict": "Al Aqiq",
-        "paymentMethod": "cod"
-      },
-      "toolResult": "{\"orderId\":12,\"orderNumber\":\"ORD-1710000000000000000\",\"status\":\"new\",...}",
-      "role": "assistant",
-      "createdAt": "2026-05-10T10:00:00Z"
-    }
-  ],
-  "meta": {
-    "page": 1,
-    "limit": 20,
-    "total": 1,
-    "totalPages": 1
-  }
-}
-```
-
 ### GET `/api/admin/conversations`
 
-Paginated list of conversations with last message, message count, and token usage.
+Paginated list of conversations with last message, message count, and token usage. Use this for the conversations index page.
 
 Query params:
 
@@ -1273,7 +1258,13 @@ Query params:
 | --- | --- | --- | --- |
 | `page` | number | No | Page number. Default: `1`. |
 | `limit` | number | No | Items per page. Default: `20`, max: `100`. |
-| `status` | string | No | Filter by `active` or `closed`. |
+| `status` | string | No | Filter by `active`, `closed`, or `archived`. |
+
+Example:
+
+```http
+GET /api/admin/conversations?page=1&limit=20&status=active
+```
 
 Response:
 
@@ -1319,11 +1310,14 @@ Response:
 {
   "data": {
     "id": 1,
+    "title": "Order conversation",
+    "customerName": "Ahmed",
+    "customerPhone": "+966500000000",
+    "channel": "web",
     "status": "active",
-    "customer_name": "Ahmed",
-    "customer_phone": "+966500000000",
-    "created_at": "2026-05-10T10:00:00Z",
-    "updated_at": "2026-05-10T10:05:00Z",
+    "lastMessageAt": "2026-05-10T10:05:00Z",
+    "createdAt": "2026-05-10T10:00:00Z",
+    "updatedAt": "2026-05-10T10:05:00Z",
     "messages": [
       {
         "id": 1,
@@ -1378,6 +1372,12 @@ Query params:
 | `limit` | number | No | Items per page. Default: `50`, max: `200`. |
 | `role` | string | No | Filter by message role (`user`, `assistant`, `tool`). |
 
+Example:
+
+```http
+GET /api/admin/conversations/1/messages?page=1&limit=50&role=assistant
+```
+
 Response:
 
 ```json
@@ -1391,6 +1391,9 @@ Response:
       "toolResults": null,
       "usagePromptTokens": 0,
       "usageCompletionTokens": 0,
+      "usageCacheWriteTokens": 0,
+      "usageCacheReadTokens": 0,
+      "usageReasoningTokens": 0,
       "provider": "",
       "model": "",
       "createdAt": "2026-05-10T10:00:00Z"

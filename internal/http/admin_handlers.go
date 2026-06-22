@@ -823,22 +823,46 @@ func (h *Handler) AdminGetBotConfig(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load bot config"})
 		return
 	}
+	c.JSON(http.StatusOK, gin.H{"data": normalizeBotConfigRow(row)})
+}
+
+func normalizeBotConfigRow(row map[string]any) gin.H {
 	hasKey := false
 	if raw, ok := row["api_key"].(string); ok && raw != "" {
 		hasKey = true
 	}
 	delete(row, "api_key")
-	row["hasApiKey"] = hasKey
-	// Decode JSONB byte slices to JSON objects for proper serialization
+	resp := gin.H{}
+	for key, value := range row {
+		resp[key] = value
+	}
+	resp["hasApiKey"] = hasKey
+	if value, ok := resp["max_tokens"]; ok {
+		resp["maxTokens"] = value
+		delete(resp, "max_tokens")
+	}
+	if value, ok := resp["custom_instructions"]; ok {
+		resp["customInstructions"] = value
+		delete(resp, "custom_instructions")
+	}
+	if value, ok := resp["created_at"]; ok {
+		resp["createdAt"] = value
+		delete(resp, "created_at")
+	}
+	if value, ok := resp["updated_at"]; ok {
+		resp["updatedAt"] = value
+		delete(resp, "updated_at")
+	}
+	// Decode JSONB byte slices to JSON objects for proper serialization.
 	for _, key := range []string{"persona"} {
-		if raw, ok := row[key].([]byte); ok && raw != nil {
+		if raw, ok := resp[key].([]byte); ok && raw != nil {
 			var decoded any
 			if err := json.Unmarshal(raw, &decoded); err == nil {
-				row[key] = decoded
+				resp[key] = decoded
 			}
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"data": row})
+	return resp
 }
 
 func (h *Handler) AdminPatchBotConfig(c *gin.Context) {
@@ -938,11 +962,21 @@ func (h *Handler) AdminAIStats(c *gin.Context) {
 
 	providerFilter := strings.TrimSpace(c.Query("provider"))
 	modelFilter := strings.TrimSpace(c.Query("model"))
+	statsFilter := dateFilter
+	statsArgs := append([]any{}, dateArgs...)
+	if providerFilter != "" {
+		statsFilter += " AND m.provider = ?"
+		statsArgs = append(statsArgs, providerFilter)
+	}
+	if modelFilter != "" {
+		statsFilter += " AND m.model = ?"
+		statsArgs = append(statsArgs, modelFilter)
+	}
 
 	var totalMessages int64
 	var totalConversations int64
-	_ = h.db.Table("messages").Count(&totalMessages).Error
-	_ = h.db.Table("conversations").Count(&totalConversations).Error
+	_ = h.db.Raw("SELECT COUNT(*) FROM messages m WHERE 1=1"+statsFilter, statsArgs...).Scan(&totalMessages).Error
+	_ = h.db.Raw("SELECT COUNT(DISTINCT m.conversation_id) FROM messages m WHERE 1=1"+statsFilter, statsArgs...).Scan(&totalConversations).Error
 
 	usage := struct {
 		PromptTokens     int64 `json:"promptTokens"`
@@ -951,18 +985,8 @@ func (h *Handler) AdminAIStats(c *gin.Context) {
 		CacheReadTokens  int64 `json:"cacheReadTokens"`
 		ReasoningTokens  int64 `json:"reasoningTokens"`
 	}{}
-	usageQ := "SELECT COALESCE(SUM(usage_prompt_tokens),0) AS prompt_tokens, COALESCE(SUM(usage_completion_tokens),0) AS completion_tokens, COALESCE(SUM(usage_cache_write_tokens),0) AS cache_write_tokens, COALESCE(SUM(usage_cache_read_tokens),0) AS cache_read_tokens, COALESCE(SUM(usage_reasoning_tokens),0) AS reasoning_tokens FROM messages m WHERE 1=1"
-	usageArgs := []any{}
-	usageArgs = append(usageArgs, dateArgs...)
-	if providerFilter != "" {
-		usageQ += " AND m.provider = ?"
-		usageArgs = append(usageArgs, providerFilter)
-	}
-	if modelFilter != "" {
-		usageQ += " AND m.model = ?"
-		usageArgs = append(usageArgs, modelFilter)
-	}
-	_ = h.db.Raw(usageQ+dateFilter, usageArgs...).Scan(&usage).Error
+	usageQ := "SELECT COALESCE(SUM(usage_prompt_tokens),0) AS prompt_tokens, COALESCE(SUM(usage_completion_tokens),0) AS completion_tokens, COALESCE(SUM(usage_cache_write_tokens),0) AS cache_write_tokens, COALESCE(SUM(usage_cache_read_tokens),0) AS cache_read_tokens, COALESCE(SUM(usage_reasoning_tokens),0) AS reasoning_tokens FROM messages m WHERE 1=1" + statsFilter
+	_ = h.db.Raw(usageQ, statsArgs...).Scan(&usage).Error
 
 	type providerStat struct {
 		Provider         string `json:"provider"`
@@ -971,16 +995,17 @@ func (h *Handler) AdminAIStats(c *gin.Context) {
 		CompletionTokens int64  `json:"completionTokens"`
 	}
 	var byProvider []providerStat
-	_ = h.db.Raw(`
+	providerQ := `
 		SELECT COALESCE(m.provider,'') AS provider,
 		       COUNT(*) AS total_messages,
 		       COALESCE(SUM(usage_prompt_tokens),0) AS prompt_tokens,
 		       COALESCE(SUM(usage_completion_tokens),0) AS completion_tokens
 		FROM messages m
-		WHERE m.provider IS NOT NULL AND m.provider != ''
+		WHERE m.provider IS NOT NULL AND m.provider != ''` + statsFilter + `
 		GROUP BY m.provider
 		ORDER BY total_messages DESC
-	`).Scan(&byProvider).Error
+	`
+	_ = h.db.Raw(providerQ, statsArgs...).Scan(&byProvider).Error
 
 	type modelStat struct {
 		Model            string `json:"model"`
@@ -989,27 +1014,32 @@ func (h *Handler) AdminAIStats(c *gin.Context) {
 		CompletionTokens int64  `json:"completionTokens"`
 	}
 	var byModel []modelStat
-	_ = h.db.Raw(`
+	modelQ := `
 		SELECT COALESCE(m.model,'') AS model,
 		       COUNT(*) AS total_messages,
 		       COALESCE(SUM(usage_prompt_tokens),0) AS prompt_tokens,
 		       COALESCE(SUM(usage_completion_tokens),0) AS completion_tokens
 		FROM messages m
-		WHERE m.model IS NOT NULL AND m.model != ''
+		WHERE m.model IS NOT NULL AND m.model != ''` + statsFilter + `
 		GROUP BY m.model
 		ORDER BY total_messages DESC
-	`).Scan(&byModel).Error
+	`
+	_ = h.db.Raw(modelQ, statsArgs...).Scan(&byModel).Error
 
 	type statusStat struct {
 		Status             string `json:"status"`
 		TotalConversations int64  `json:"totalConversations"`
 	}
 	var byStatus []statusStat
-	_ = h.db.Table("conversations").
-		Select("COALESCE(status,'unknown') AS status, COUNT(*) AS total_conversations").
-		Group("status").
-		Order("total_conversations DESC").
-		Scan(&byStatus).Error
+	statusQ := `
+		SELECT COALESCE(c.status,'unknown') AS status, COUNT(DISTINCT c.id) AS total_conversations
+		FROM conversations c
+		LEFT JOIN messages m ON m.conversation_id = c.id
+		WHERE 1=1` + statsFilter + `
+		GROUP BY c.status
+		ORDER BY total_conversations DESC
+	`
+	_ = h.db.Raw(statusQ, statsArgs...).Scan(&byStatus).Error
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
 		"messages":      totalMessages,
@@ -1082,128 +1112,6 @@ func (h *Handler) AdminListMessages(c *gin.Context) {
 	}
 	totalPages := int((total + int64(limit) - 1) / int64(limit))
 	c.JSON(http.StatusOK, gin.H{"data": messages, "meta": gin.H{"page": page, "limit": limit, "total": total, "totalPages": totalPages}})
-}
-
-func (h *Handler) AdminListToolCalls(c *gin.Context) {
-	page := 1
-	limit := 50
-	if v := c.Query("page"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
-			page = parsed
-		}
-	}
-	if v := c.Query("limit"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil {
-			if parsed < 1 {
-				parsed = 1
-			}
-			if parsed > 200 {
-				parsed = 200
-			}
-			limit = parsed
-		}
-	}
-
-	type toolCallRow struct {
-		MessageID      int64     `json:"messageId"`
-		ConversationID int64     `json:"conversationId"`
-		ToolName       string    `json:"toolName"`
-		Arguments      string    `json:"arguments"`
-		ToolResult     string    `json:"toolResult"`
-		Role           string    `json:"role"`
-		CreatedAt      time.Time `json:"createdAt"`
-	}
-
-	whereClause := "WHERE m.tool_calls IS NOT NULL"
-	whereArgs := []any{}
-
-	if convID := strings.TrimSpace(c.Query("conversationId")); convID != "" {
-		whereClause += " AND m.conversation_id = ?"
-		whereArgs = append(whereArgs, convID)
-	}
-	if toolName := strings.TrimSpace(c.Query("toolName")); toolName != "" {
-		whereClause += " AND m.tool_calls::text ILIKE ?"
-		whereArgs = append(whereArgs, "%"+toolName+"%")
-	}
-	if from := strings.TrimSpace(c.Query("from")); from != "" {
-		whereClause += " AND m.created_at >= ?"
-		whereArgs = append(whereArgs, from)
-	}
-	if to := strings.TrimSpace(c.Query("to")); to != "" {
-		whereClause += " AND m.created_at <= ?"
-		whereArgs = append(whereArgs, to)
-	}
-
-	var total int64
-	countQ := "SELECT COUNT(*) FROM messages m " + whereClause
-	if err := h.db.Raw(countQ, whereArgs...).Scan(&total).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to count tool calls"})
-		return
-	}
-
-	var rows []toolCallRow
-	offset := (page - 1) * limit
-	dataQ := fmt.Sprintf(`
-		SELECT m.id AS message_id, m.conversation_id,
-		       m.tool_calls::text AS arguments,
-		       COALESCE(m.tool_results::text,'') AS tool_result,
-		       m.role, m.created_at
-		FROM messages m %s
-		ORDER BY m.created_at DESC
-		OFFSET ? LIMIT ?
-	`, whereClause)
-	dataArgs := append(whereArgs, offset, limit)
-	if err := h.db.Raw(dataQ, dataArgs...).Scan(&rows).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load tool calls"})
-		return
-	}
-
-	type toolCallEntry struct {
-		MessageID      int64     `json:"messageId"`
-		ConversationID int64     `json:"conversationId"`
-		ToolName       string    `json:"toolName"`
-		Arguments      any       `json:"arguments"`
-		ToolResult     any       `json:"toolResult"`
-		Role           string    `json:"role"`
-		CreatedAt      time.Time `json:"createdAt"`
-	}
-
-	entries := make([]toolCallEntry, 0)
-	for _, row := range rows {
-		var calls []struct {
-			ID        string         `json:"id"`
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
-		}
-		if err := json.Unmarshal([]byte(row.Arguments), &calls); err != nil {
-			continue
-		}
-		var results []struct {
-			ToolCallID string `json:"toolCallId"`
-			Name       string `json:"name"`
-			Content    string `json:"content"`
-		}
-		_ = json.Unmarshal([]byte(row.ToolResult), &results)
-		resultMap := map[string]string{}
-		for _, r := range results {
-			resultMap[r.ToolCallID] = r.Content
-		}
-		for _, call := range calls {
-			entry := toolCallEntry{
-				MessageID:      row.MessageID,
-				ConversationID: row.ConversationID,
-				ToolName:       call.Name,
-				Arguments:      call.Arguments,
-				ToolResult:     resultMap[call.ID],
-				Role:           row.Role,
-				CreatedAt:      row.CreatedAt,
-			}
-			entries = append(entries, entry)
-		}
-	}
-
-	totalPages := int((total + int64(limit) - 1) / int64(limit))
-	c.JSON(http.StatusOK, gin.H{"data": entries, "meta": gin.H{"page": page, "limit": limit, "total": total, "totalPages": totalPages}})
 }
 
 func (h *Handler) AdminListConversations(c *gin.Context) {
@@ -1292,8 +1200,23 @@ func (h *Handler) AdminListConversations(c *gin.Context) {
 
 func (h *Handler) AdminGetConversation(c *gin.Context) {
 	id := c.Param("id")
-	var convo map[string]any
-	if err := h.db.Table("conversations").Where("id = ?", id).Take(&convo).Error; err != nil {
+	type conversationDetail struct {
+		ID            int64      `json:"id" gorm:"column:id"`
+		Title         *string    `json:"title" gorm:"column:title"`
+		CustomerName  *string    `json:"customerName" gorm:"column:customer_name"`
+		CustomerPhone *string    `json:"customerPhone" gorm:"column:customer_phone"`
+		Channel       string     `json:"channel" gorm:"column:channel"`
+		Status        string     `json:"status" gorm:"column:status"`
+		LastMessageAt *time.Time `json:"lastMessageAt" gorm:"column:last_message_at"`
+		CreatedAt     time.Time  `json:"createdAt" gorm:"column:created_at"`
+		UpdatedAt     time.Time  `json:"updatedAt" gorm:"column:updated_at"`
+		Messages      any        `json:"messages" gorm:"-"`
+	}
+	var convo conversationDetail
+	if err := h.db.Table("conversations").
+		Select("id, title, customer_name, customer_phone, channel, status, last_message_at, created_at, updated_at").
+		Where("id = ?", id).
+		Take(&convo).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
 			return
@@ -1325,7 +1248,7 @@ func (h *Handler) AdminGetConversation(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load messages"})
 		return
 	}
-	convo["messages"] = messages
+	convo.Messages = messages
 	c.JSON(http.StatusOK, gin.H{"data": convo})
 }
 

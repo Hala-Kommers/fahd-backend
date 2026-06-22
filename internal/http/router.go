@@ -70,7 +70,6 @@ func NewRouter(cfg config.Config, db *gorm.DB, wsHandler http.Handler) *gin.Engi
 	admin.PATCH("/bot/config", handler.AdminPatchBotConfig)
 	admin.POST("/bot/test-connection", handler.AdminTestBotConnection)
 	admin.GET("/ai/stats", handler.AdminAIStats)
-	admin.GET("/ai/tool-calls", handler.AdminListToolCalls)
 	admin.GET("/conversations", handler.AdminListConversations)
 	admin.GET("/conversations/:id", handler.AdminGetConversation)
 	admin.GET("/conversations/:id/messages", handler.AdminListMessages)
