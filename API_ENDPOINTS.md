@@ -902,7 +902,7 @@ All admin order endpoints require `Authorization: Bearer <access_token>`.
 
 ### GET `/api/admin/orders`
 
-Returns paginated orders for admin order management.
+Returns paginated orders for admin order management. This endpoint does not create orders.
 
 Query params:
 
@@ -910,13 +910,17 @@ Query params:
 | --- | --- | --- | --- |
 | `page` | number | No | Page number. Default: `1`. |
 | `limit` | number | No | Items per page. Default: `20`, max: `100`. |
-| `search` | string | No | Searches by order number, customer name, or customer phone. |
-| `status` | string | No | Filter by order status: `new`, `confirmed`, `processing`, `shipped`, `delivered`, `returned`, `cancelled`. |
+| `orderNumber` | string | No | Partial order number match. |
+| `name` | string | No | Partial customer name match. |
+| `phone` | string | No | Partial customer phone match. |
+| `status` | string | No | Filter by order status: `new`, `confirmed`, `shipped`, `delivered`, `returned`, `cancelled`. |
+| `city` | string/number | No | Filter by state/wilaya (`الولاية`). Pass a city ID or partial city name. |
+| `search` | string | No | Backward-compatible search across order number, customer name, and customer phone. |
 
 Example:
 
 ```http
-GET /api/admin/orders?page=1&limit=20&search=ahmed&status=new
+GET /api/admin/orders?page=1&limit=20&orderNumber=ORD&name=Ahmed&phone=966&status=new&city=1
 ```
 
 Response:
@@ -927,15 +931,20 @@ Response:
     {
       "id": 12,
       "orderNumber": "ORD-1710000000000000000",
+      "conversationId": 3,
       "createdAt": "2026-05-10T10:00:00Z",
       "customerName": "Ahmed",
       "customerPhone": "+966500000000",
+      "customerEmail": "ahmed@example.com",
+      "cityId": 1,
       "addressCity": "Riyadh",
+      "addressZone": "Al Malqa",
+      "addressDistrict": "Al Aqiq",
       "total": 108,
+      "currency": "SAR",
       "paymentMethod": "COD",
-      "status": "new",
-      "confidence": 0,
-      "risk": 0
+      "paymentStatus": "pending",
+      "status": "new"
     }
   ],
   "meta": {
@@ -949,7 +958,7 @@ Response:
 
 ### GET `/api/admin/orders/:id`
 
-Returns full order details with order items.
+Returns full order details with order items and the linked conversation when the order was created from AI chat.
 
 Response:
 
@@ -957,39 +966,102 @@ Response:
 {
   "data": {
     "id": 12,
-    "order_number": "ORD-1710000000000000000",
-    "customer_name": "Ahmed",
-    "customer_phone": "+966500000000",
-    "address_city": "Riyadh",
-    "grand_total": 108,
-    "payment_method": "COD",
+    "orderNumber": "ORD-1710000000000000000",
+    "conversationId": 3,
+    "createdAt": "2026-05-10T10:00:00Z",
+    "updatedAt": "2026-05-10T10:00:00Z",
     "status": "new",
+    "paymentMethod": "COD",
+    "paymentStatus": "pending",
+    "subtotal": 120,
+    "shipping": 0,
+    "discount": 12,
+    "grandTotal": 108,
+    "currency": "SAR",
+    "couponCode": "WELCOME10",
+    "customerName": "Ahmed",
+    "customerPhone": "+966500000000",
+    "customerEmail": "ahmed@example.com",
+    "addressRaw": "Riyadh, Al Malqa",
+    "cityId": 1,
+    "addressCity": "Riyadh",
+    "addressZone": "Al Malqa",
+    "addressDistrict": "Al Aqiq",
     "items": [
       {
         "id": 1,
-        "order_id": 12,
-        "product_id": 1,
+        "productId": 1,
+        "variantId": null,
         "sku": "P-1001",
         "title": "Oud Signature",
         "qty": 1,
-        "unit_price": 120,
-        "line_total": 120
+        "unitPrice": 120,
+        "lineTotal": 120,
+        "product": {
+          "id": 1,
+          "title": "Oud Signature",
+          "slug": "oud-signature",
+          "sku": "P-1001",
+          "primaryImage": "https://images.unsplash.com/photo-1594035910387-fea47794261f"
+        }
       }
-    ]
+    ],
+    "conversation": {
+      "id": 3,
+      "title": "Order conversation",
+      "customerName": "Ahmed",
+      "customerPhone": "+966500000000",
+      "channel": "web",
+      "status": "active",
+      "lastMessageAt": "2026-05-10T10:00:00Z",
+      "createdAt": "2026-05-10T10:00:00Z",
+      "updatedAt": "2026-05-10T10:00:00Z",
+      "messages": [
+        {
+          "id": 1,
+          "role": "user",
+          "content": "I want to order Oud Signature",
+          "toolCalls": null,
+          "toolResults": null,
+          "usagePromptTokens": 0,
+          "usageCompletionTokens": 0,
+          "usageCacheWriteTokens": 0,
+          "usageCacheReadTokens": 0,
+          "usageReasoningTokens": 0,
+          "provider": "",
+          "model": "",
+          "createdAt": "2026-05-10T10:00:00Z"
+        },
+        {
+          "id": 2,
+          "role": "assistant",
+          "content": "Your order has been created.",
+          "toolCalls": "[{\"name\":\"create_order\"}]",
+          "toolResults": "[{\"name\":\"create_order\"}]",
+          "usagePromptTokens": 500,
+          "usageCompletionTokens": 150,
+          "usageCacheWriteTokens": 0,
+          "usageCacheReadTokens": 0,
+          "usageReasoningTokens": 0,
+          "provider": "google",
+          "model": "gemini-2.0-flash",
+          "createdAt": "2026-05-10T10:00:01Z"
+        }
+      ]
+    }
   }
 }
 ```
 
 ### PATCH `/api/admin/orders/:id`
 
-Updates order fields, typically `status`, `payment_status`, `notes`, `tags`, or risk fields.
+Updates order status only. Status is validated at the application level and must be one of: `new`, `confirmed`, `shipped`, `delivered`, `returned`, `cancelled`.
 
 Request:
 
 ```json
 {
-  "status": "confirmed",
-  "notes": "Customer confirmed by phone"
+  "status": "confirmed"
 }
 ```
 
@@ -998,7 +1070,8 @@ Response:
 ```json
 {
   "data": {
-    "id": "12"
+    "id": "12",
+    "status": "confirmed"
   }
 }
 ```

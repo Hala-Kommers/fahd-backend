@@ -115,8 +115,6 @@ type Conversation struct {
 	CustomerPhone *string    `json:"customerPhone"`
 	Channel       string     `json:"channel"`
 	Status        string     `json:"status"`
-	Sentiment     *string    `json:"sentiment"`
-	Summary       *string    `json:"summary"`
 	LastMessageAt *time.Time `json:"lastMessageAt"`
 	MetaJSON      []byte     `json:"-"`
 	CreatedAt     time.Time  `json:"createdAt"`

@@ -491,11 +491,15 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 		CreatedAt       time.Time `json:"createdAt"`
 		CustomerName    string    `json:"customerName"`
 		CustomerPhone   string    `json:"customerPhone"`
+		CustomerEmail   *string   `json:"customerEmail"`
+		CityID          *int64    `json:"cityId"`
 		AddressCity     string    `json:"addressCity"`
 		AddressZone     *string   `json:"addressZone"`
 		AddressDistrict *string   `json:"addressDistrict"`
 		Total           float64   `json:"total"`
+		Currency        string    `json:"currency"`
 		PaymentMethod   string    `json:"paymentMethod"`
+		PaymentStatus   string    `json:"paymentStatus"`
 		Status          string    `json:"status"`
 	}
 
@@ -520,12 +524,32 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 
 	var rows []adminOrderListItem
 	q := h.db.Table("orders o").
-		Select("o.id, o.order_number, o.conversation_id, o.created_at, o.customer_name, o.customer_phone, c.name AS address_city, o.address_zone, o.address_district, o.grand_total AS total, o.payment_method, o.status").
+		Select("o.id, o.order_number, o.conversation_id, o.created_at, o.customer_name, o.customer_phone, o.customer_email, o.city_id, c.name AS address_city, o.address_zone, o.address_district, o.grand_total AS total, o.currency, o.payment_method, o.payment_status, o.status").
 		Joins("LEFT JOIN cities c ON c.id = o.city_id").
-		Order("created_at DESC")
+		Order("o.created_at DESC")
 
 	if status := strings.TrimSpace(c.Query("status")); status != "" {
+		if !isValidOrderStatus(status) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status"})
+			return
+		}
 		q = q.Where("o.status = ?", status)
+	}
+	if orderNumber := strings.TrimSpace(c.Query("orderNumber")); orderNumber != "" {
+		q = q.Where("o.order_number ILIKE ?", "%"+orderNumber+"%")
+	}
+	if name := strings.TrimSpace(c.Query("name")); name != "" {
+		q = q.Where("o.customer_name ILIKE ?", "%"+name+"%")
+	}
+	if phone := strings.TrimSpace(c.Query("phone")); phone != "" {
+		q = q.Where("o.customer_phone ILIKE ?", "%"+phone+"%")
+	}
+	if city := strings.TrimSpace(c.Query("city")); city != "" {
+		if cityID, err := strconv.ParseInt(city, 10, 64); err == nil && cityID > 0 {
+			q = q.Where("o.city_id = ?", cityID)
+		} else {
+			q = q.Where("c.name ILIKE ?", "%"+city+"%")
+		}
 	}
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		like := "%" + search + "%"
@@ -549,8 +573,39 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 
 func (h *Handler) AdminGetOrder(c *gin.Context) {
 	id := c.Param("id")
-	var order map[string]any
-	if err := h.db.Table("orders").Where("id = ?", id).Take(&order).Error; err != nil {
+	type adminOrderDetail struct {
+		ID              int64     `json:"id" gorm:"column:id"`
+		OrderNumber     string    `json:"orderNumber" gorm:"column:order_number"`
+		ConversationID  *int64    `json:"conversationId" gorm:"column:conversation_id"`
+		CreatedAt       time.Time `json:"createdAt" gorm:"column:created_at"`
+		UpdatedAt       time.Time `json:"updatedAt" gorm:"column:updated_at"`
+		Status          string    `json:"status" gorm:"column:status"`
+		PaymentMethod   string    `json:"paymentMethod" gorm:"column:payment_method"`
+		PaymentStatus   string    `json:"paymentStatus" gorm:"column:payment_status"`
+		Subtotal        float64   `json:"subtotal" gorm:"column:subtotal"`
+		Shipping        float64   `json:"shipping" gorm:"column:shipping"`
+		Discount        float64   `json:"discount" gorm:"column:discount"`
+		GrandTotal      float64   `json:"grandTotal" gorm:"column:grand_total"`
+		Currency        string    `json:"currency" gorm:"column:currency"`
+		CouponCode      *string   `json:"couponCode" gorm:"column:coupon_code"`
+		CustomerName    string    `json:"customerName" gorm:"column:customer_name"`
+		CustomerPhone   string    `json:"customerPhone" gorm:"column:customer_phone"`
+		CustomerEmail   *string   `json:"customerEmail" gorm:"column:customer_email"`
+		AddressRaw      string    `json:"addressRaw" gorm:"column:address_raw"`
+		CityID          *int64    `json:"cityId" gorm:"column:city_id"`
+		AddressCity     *string   `json:"addressCity" gorm:"column:address_city"`
+		AddressZone     *string   `json:"addressZone" gorm:"column:address_zone"`
+		AddressDistrict *string   `json:"addressDistrict" gorm:"column:address_district"`
+		Items           []gin.H   `json:"items" gorm:"-"`
+		Conversation    *gin.H    `json:"conversation" gorm:"-"`
+	}
+
+	var order adminOrderDetail
+	if err := h.db.Table("orders o").
+		Select("o.id, o.order_number, o.conversation_id, o.created_at, o.updated_at, o.status, o.payment_method, o.payment_status, o.subtotal, o.shipping, o.discount, o.grand_total, o.currency, o.coupon_code, o.customer_name, o.customer_phone, o.customer_email, o.address_raw, o.city_id, c.name AS address_city, o.address_zone, o.address_district").
+		Joins("LEFT JOIN cities c ON c.id = o.city_id").
+		Where("o.id = ?", id).
+		Take(&order).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
 			return
@@ -558,25 +613,154 @@ func (h *Handler) AdminGetOrder(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load order"})
 		return
 	}
-	var items []map[string]any
-	_ = h.db.Table("order_items").Where("order_id = ?", id).Find(&items).Error
-	order["items"] = items
+
+	type adminOrderItemRow struct {
+		ID           int64   `gorm:"column:id"`
+		ProductID    *int64  `gorm:"column:product_id"`
+		VariantID    *int64  `gorm:"column:variant_id"`
+		SKU          *string `gorm:"column:sku"`
+		Title        string  `gorm:"column:title"`
+		Variant      []byte  `gorm:"column:variant"`
+		Qty          int     `gorm:"column:qty"`
+		UnitPrice    float64 `gorm:"column:unit_price"`
+		LineTotal    float64 `gorm:"column:line_total"`
+		SnapshotJSON []byte  `gorm:"column:snapshot_json"`
+		ProductTitle *string `gorm:"column:product_title"`
+		ProductSlug  *string `gorm:"column:product_slug"`
+		ProductSKU   *string `gorm:"column:product_sku"`
+		PrimaryImage *string `gorm:"column:primary_image"`
+		VariantSKU   *string `gorm:"column:variant_sku"`
+		VariantImage *string `gorm:"column:variant_image"`
+	}
+	var itemRows []adminOrderItemRow
+	if err := h.db.Table("order_items oi").
+		Select("oi.id, oi.product_id, oi.variant_id, oi.sku, oi.title, oi.variant, oi.qty, oi.unit_price, oi.line_total, oi.snapshot_json, p.title AS product_title, p.slug AS product_slug, p.sku AS product_sku, img.url AS primary_image, pv.sku AS variant_sku, pv.image AS variant_image").
+		Joins("LEFT JOIN products p ON p.id = oi.product_id").
+		Joins("LEFT JOIN product_variants pv ON pv.id = oi.variant_id").
+		Joins("LEFT JOIN LATERAL (SELECT url FROM product_images i WHERE i.product_id = p.id ORDER BY i.is_primary DESC, i.sort_order ASC, i.id ASC LIMIT 1) img ON TRUE").
+		Where("oi.order_id = ?", order.ID).
+		Order("oi.id ASC").
+		Find(&itemRows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load order items"})
+		return
+	}
+
+	order.Items = make([]gin.H, 0, len(itemRows))
+	for _, item := range itemRows {
+		payload := gin.H{
+			"id":        item.ID,
+			"productId": item.ProductID,
+			"variantId": item.VariantID,
+			"sku":       item.SKU,
+			"title":     item.Title,
+			"qty":       item.Qty,
+			"unitPrice": item.UnitPrice,
+			"lineTotal": item.LineTotal,
+			"product": gin.H{
+				"id":           item.ProductID,
+				"title":        item.ProductTitle,
+				"slug":         item.ProductSlug,
+				"sku":          item.ProductSKU,
+				"primaryImage": item.PrimaryImage,
+			},
+		}
+		if item.VariantID != nil {
+			payload["variant"] = gin.H{"id": item.VariantID, "sku": item.VariantSKU, "image": item.VariantImage}
+		}
+		order.Items = append(order.Items, payload)
+	}
+
+	if order.ConversationID != nil {
+		var conversation struct {
+			ID            int64      `gorm:"column:id"`
+			Title         *string    `gorm:"column:title"`
+			CustomerName  *string    `gorm:"column:customer_name"`
+			CustomerPhone *string    `gorm:"column:customer_phone"`
+			Channel       string     `gorm:"column:channel"`
+			Status        string     `gorm:"column:status"`
+			LastMessageAt *time.Time `gorm:"column:last_message_at"`
+			CreatedAt     time.Time  `gorm:"column:created_at"`
+			UpdatedAt     time.Time  `gorm:"column:updated_at"`
+		}
+		if err := h.db.Table("conversations").
+			Select("id, title, customer_name, customer_phone, channel, status, last_message_at, created_at, updated_at").
+			Where("id = ?", *order.ConversationID).
+			Take(&conversation).Error; err == nil {
+			type messageRow struct {
+				ID                    int64     `json:"id"`
+				Role                  string    `json:"role"`
+				Content               string    `json:"content"`
+				ToolCalls             *string   `json:"toolCalls"`
+				ToolResults           *string   `json:"toolResults"`
+				UsagePromptTokens     int       `json:"usagePromptTokens"`
+				UsageCompletionTokens int       `json:"usageCompletionTokens"`
+				UsageCacheWriteTokens int       `json:"usageCacheWriteTokens"`
+				UsageCacheReadTokens  int       `json:"usageCacheReadTokens"`
+				UsageReasoningTokens  int       `json:"usageReasoningTokens"`
+				Provider              string    `json:"provider"`
+				Model                 string    `json:"model"`
+				CreatedAt             time.Time `json:"createdAt"`
+			}
+			messages := []messageRow{}
+			if err := h.db.Table("messages").
+				Select("id, role, content, tool_calls, tool_results, COALESCE(usage_prompt_tokens,0) AS usage_prompt_tokens, COALESCE(usage_completion_tokens,0) AS usage_completion_tokens, COALESCE(usage_cache_write_tokens,0) AS usage_cache_write_tokens, COALESCE(usage_cache_read_tokens,0) AS usage_cache_read_tokens, COALESCE(usage_reasoning_tokens,0) AS usage_reasoning_tokens, COALESCE(provider,'') AS provider, COALESCE(model,'') AS model, created_at").
+				Where("conversation_id = ?", *order.ConversationID).
+				Order("created_at ASC").
+				Find(&messages).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load conversation messages"})
+				return
+			}
+			order.Conversation = &gin.H{
+				"id":            conversation.ID,
+				"title":         conversation.Title,
+				"customerName":  conversation.CustomerName,
+				"customerPhone": conversation.CustomerPhone,
+				"channel":       conversation.Channel,
+				"status":        conversation.Status,
+				"lastMessageAt": conversation.LastMessageAt,
+				"createdAt":     conversation.CreatedAt,
+				"updatedAt":     conversation.UpdatedAt,
+				"messages":      messages,
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"data": order})
 }
 
 func (h *Handler) AdminUpdateOrder(c *gin.Context) {
 	id := c.Param("id")
-	var payload map[string]any
+	var payload struct {
+		Status string `json:"status"`
+	}
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid order payload"})
 		return
 	}
-	delete(payload, "id")
-	if err := h.db.Table("orders").Where("id = ?", id).Updates(payload).Error; err != nil {
+	status := strings.TrimSpace(payload.Status)
+	if !isValidOrderStatus(status) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status"})
+		return
+	}
+	result := h.db.Table("orders").Where("id = ?", id).Updates(map[string]any{"status": status, "updated_at": time.Now()})
+	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update order"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": id}})
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": id, "status": status}})
+}
+
+func isValidOrderStatus(status string) bool {
+	switch status {
+	case "new", "confirmed", "shipped", "delivered", "returned", "cancelled":
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *Handler) AdminListCoupons(c *gin.Context) {

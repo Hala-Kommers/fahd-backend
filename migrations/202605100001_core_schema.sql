@@ -171,8 +171,6 @@ CREATE TABLE IF NOT EXISTS conversations (
     customer_phone TEXT,
     channel TEXT NOT NULL DEFAULT 'web',
     status TEXT NOT NULL CHECK (status IN ('active', 'closed', 'archived')),
-    sentiment TEXT CHECK (sentiment IN ('positive', 'neutral', 'negative')),
-    summary TEXT,
     last_message_at TIMESTAMPTZ,
     meta_json JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
