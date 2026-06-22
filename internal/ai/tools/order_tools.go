@@ -160,7 +160,7 @@ func (t *LookupOrderTool) Definition() ai.ToolDefinition {
 			"type":     "object",
 			"required": []string{"orderNumber", "customerPhone"},
 			"properties": map[string]any{
-				"orderNumber":   map[string]any{"type": "string", "description": "Order number (e.g. ORD-...)."},
+				"orderNumber":   map[string]any{"type": "string", "description": "Order number (e.g. ORD-3AC5)."},
 				"customerPhone": map[string]any{"type": "string", "description": "Customer phone number for ownership verification."},
 			},
 		},

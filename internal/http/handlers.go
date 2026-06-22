@@ -1,9 +1,11 @@
 package http
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -440,8 +442,14 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	addressZone := normalizedOptionalString(req.AddressZone)
 	addressDistrict := normalizedOptionalString(req.AddressDistrict)
 
+	orderNumber, err := generateUniqueOrderNumber(h.db)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate order number"})
+		return
+	}
+
 	order := Order{
-		OrderNumber:     fmt.Sprintf("ORD-%d", time.Now().UnixNano()),
+		OrderNumber:     orderNumber,
 		Status:          "new",
 		PaymentMethod:   paymentMethod,
 		Subtotal:        subtotal,
@@ -542,6 +550,36 @@ func normalizedOptionalString(value *string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+func generateUniqueOrderNumber(db *gorm.DB) (string, error) {
+	for i := 0; i < 10; i++ {
+		orderNumber, err := randomOrderNumber()
+		if err != nil {
+			return "", err
+		}
+		var count int64
+		if err := db.Table("orders").Where("order_number = ?", orderNumber).Count(&count).Error; err != nil {
+			return "", err
+		}
+		if count == 0 {
+			return orderNumber, nil
+		}
+	}
+	return "", fmt.Errorf("failed to generate unique order number")
+}
+
+func randomOrderNumber() (string, error) {
+	const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	code := make([]byte, 4)
+	for i := range code {
+		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
+		if err != nil {
+			return "", err
+		}
+		code[i] = alphabet[idx.Int64()]
+	}
+	return "ORD-" + string(code), nil
 }
 
 func (h *Handler) GetOrder(c *gin.Context) {
