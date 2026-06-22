@@ -288,6 +288,8 @@ type createOrderRequest struct {
 	CustomerName    string            `json:"customerName"`
 	CustomerPhone   string            `json:"customerPhone"`
 	CustomerEmail   string            `json:"customerEmail"`
+	VisitorID       *string           `json:"visitorId"`
+	SessionID       *string           `json:"sessionId"`
 	AddressRaw      string            `json:"addressRaw"`
 	CityID          int64             `json:"cityId"`
 	AddressZone     *string           `json:"addressZone"`
@@ -439,6 +441,8 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		discount = subtotal
 	}
 	grandTotal := roundMoney(subtotal + shipping - discount)
+	visitorID := normalizedOptionalString(req.VisitorID)
+	sessionID := normalizedOptionalString(req.SessionID)
 	addressZone := normalizedOptionalString(req.AddressZone)
 	addressDistrict := normalizedOptionalString(req.AddressDistrict)
 
@@ -459,6 +463,8 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		Currency:        "SAR",
 		CustomerName:    req.CustomerName,
 		CustomerPhone:   req.CustomerPhone,
+		VisitorID:       visitorID,
+		SessionID:       sessionID,
 		AddressRaw:      req.AddressRaw,
 		CityID:          &req.CityID,
 		AddressZone:     addressZone,
@@ -490,6 +496,8 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		"customer_name":    req.CustomerName,
 		"customer_phone":   req.CustomerPhone,
 		"customer_email":   strings.TrimSpace(req.CustomerEmail),
+		"visitor_id":       visitorID,
+		"session_id":       sessionID,
 		"address_raw":      req.AddressRaw,
 		"city_id":          req.CityID,
 		"address_zone":     addressZone,
@@ -531,10 +539,103 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to finalize order"})
 		return
 	}
+	recordAnalyticsEvent(h.db, analyticsEventInput{VisitorID: visitorID, SessionID: sessionID, EventType: "order_created", Path: c.Request.URL.Path, UserAgent: c.Request.UserAgent(), Metadata: map[string]any{"orderId": created.ID, "orderNumber": order.OrderNumber}})
 
 	order.ID = created.ID
 
 	c.JSON(http.StatusCreated, gin.H{"data": order})
+}
+
+type analyticsEventRequest struct {
+	VisitorID string         `json:"visitorId"`
+	SessionID string         `json:"sessionId"`
+	EventType string         `json:"eventType"`
+	Path      string         `json:"path"`
+	Referrer  string         `json:"referrer"`
+	Metadata  map[string]any `json:"metadata"`
+}
+
+func (h *Handler) TrackAnalyticsEvent(c *gin.Context) {
+	var req analyticsEventRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid analytics event payload"})
+		return
+	}
+	visitorID := strings.TrimSpace(req.VisitorID)
+	sessionID := strings.TrimSpace(req.SessionID)
+	eventType := strings.TrimSpace(req.EventType)
+	if eventType == "" {
+		eventType = "page_view"
+	}
+	if !isValidAnalyticsEventType(eventType) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid eventType"})
+		return
+	}
+	if visitorID == "" && sessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "visitorId or sessionId is required"})
+		return
+	}
+	path := strings.TrimSpace(req.Path)
+	if path == "" {
+		path = c.Request.URL.Path
+	}
+	referrer := strings.TrimSpace(req.Referrer)
+	if referrer == "" {
+		referrer = c.Request.Referer()
+	}
+	var visitorPtr *string
+	if visitorID != "" {
+		visitorPtr = &visitorID
+	}
+	var sessionPtr *string
+	if sessionID != "" {
+		sessionPtr = &sessionID
+	}
+	if err := recordAnalyticsEvent(h.db, analyticsEventInput{VisitorID: visitorPtr, SessionID: sessionPtr, EventType: eventType, Path: path, Referrer: referrer, UserAgent: c.Request.UserAgent(), Metadata: req.Metadata}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save analytics event"})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"data": gin.H{"tracked": true}})
+}
+
+type analyticsEventInput struct {
+	VisitorID *string
+	SessionID *string
+	EventType string
+	Path      string
+	Referrer  string
+	UserAgent string
+	Metadata  map[string]any
+}
+
+func recordAnalyticsEvent(db *gorm.DB, input analyticsEventInput) error {
+	if !isValidAnalyticsEventType(input.EventType) {
+		return nil
+	}
+	metadata := input.Metadata
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	encoded, _ := json.Marshal(metadata)
+	row := map[string]any{
+		"visitor_id": input.VisitorID,
+		"session_id": input.SessionID,
+		"event_type": input.EventType,
+		"path":       strings.TrimSpace(input.Path),
+		"referrer":   strings.TrimSpace(input.Referrer),
+		"user_agent": strings.TrimSpace(input.UserAgent),
+		"metadata":   string(encoded),
+	}
+	return db.Table("analytics_events").Create(&row).Error
+}
+
+func isValidAnalyticsEventType(eventType string) bool {
+	switch eventType {
+	case "page_view", "chat_started", "order_created":
+		return true
+	default:
+		return false
+	}
 }
 
 func roundMoney(value float64) float64 {

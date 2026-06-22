@@ -308,6 +308,43 @@ Response for 10 percent coupon:
 }
 ```
 
+### POST `/api/analytics/events`
+
+Tracks storefront analytics events. Frontend should create a stable anonymous `visitorId` and `sessionId` and send them with page views, chat context, and orders.
+
+Supported `eventType` values:
+
+- `page_view`
+- `chat_started`
+- `order_created`
+
+The backend automatically records `chat_started` when a conversation starts with visitor/session context and `order_created` when an order is created with visitor/session context. Frontend should still send `page_view` events directly.
+
+Request:
+
+```json
+{
+  "visitorId": "v_abc123",
+  "sessionId": "s_abc123",
+  "eventType": "page_view",
+  "path": "/products/oud-signature",
+  "referrer": "https://example.com",
+  "metadata": {
+    "productId": 1
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "tracked": true
+  }
+}
+```
+
 ### POST `/api/orders`
 
 Creates an order. Frontend must not send totals. Backend computes prices, discount, grand total, and creates order items.
@@ -320,6 +357,8 @@ Body fields:
 | `customerName` | string | Yes | Customer name. |
 | `customerPhone` | string | Yes | Customer phone. |
 | `customerEmail` | string | No | Customer email. |
+| `visitorId` | string | No | Anonymous visitor ID for analytics linkage. |
+| `sessionId` | string | No | Anonymous session ID for analytics linkage. |
 | `addressRaw` | string | Yes | Full address text. |
 | `cityId` | number | Yes | Selected state/wilaya (`الولاية`) ID from `GET /api/cities`. |
 | `addressZone` | string | No | City (`المدينة`) inside the selected state/wilaya. |
@@ -343,6 +382,8 @@ Request:
   "customerName": "Ahmed",
   "customerPhone": "+966500000000",
   "customerEmail": "ahmed@example.com",
+  "visitorId": "v_abc123",
+  "sessionId": "s_abc123",
   "addressRaw": "Riyadh, Al Malqa",
   "cityId": 1,
   "addressZone": "Al Malqa",
@@ -370,6 +411,8 @@ Response:
     "currency": "SAR",
     "customerName": "Ahmed",
     "customerPhone": "+966500000000",
+    "visitorId": "v_abc123",
+    "sessionId": "s_abc123",
     "addressRaw": "Riyadh, Al Malqa",
     "cityId": 1,
     "addressZone": "Al Malqa",
@@ -455,7 +498,7 @@ With city context (e.g. user selected a city from a dropdown):
 {
   "type": "message",
   "content": "أريد طلب هذا المنتج",
-  "context": { "productId": 2, "variantId": 2, "cityId": 5 }
+  "context": { "productId": 2, "variantId": 2, "cityId": 5, "visitorId": "v_abc123", "sessionId": "s_abc123" }
 }
 ```
 
@@ -468,6 +511,8 @@ The optional `context` object tells the AI about the customer's current page/sel
 | `productId` | number | The product the customer is currently viewing. AI uses this ID directly in tool calls without asking. |
 | `variantId` | number | The selected product variant (if applicable). |
 | `cityId` | number | The state/wilaya (`الولاية`) selected by the customer from the checkout dropdown. AI uses this when creating orders without asking for the state/wilaya. |
+| `visitorId` | string | Anonymous visitor ID for analytics linkage. |
+| `sessionId` | string | Anonymous session ID for analytics linkage. |
 
 Backend acknowledges immediately:
 ```json
@@ -518,7 +563,7 @@ Frontend sends `{ "type": "ping" }`, backend responds `{ "type": "pong" }`.
 | `init` | none | Create a new anonymous chat session. First message after connecting. |
 | `auth` | `session_id`, `token` | Re-authenticate an existing session after reconnect. |
 | `history` | none | Request conversation message history (most recent first). Must be authenticated first. |
-| `message` | `content`, `context` | Send a chat message to the AI assistant. Optional `context` object can include `productId`, `variantId`, and `cityId` (see [Context Fields](#context-fields)). |
+| `message` | `content`, `context` | Send a chat message to the AI assistant. Optional `context` object can include `productId`, `variantId`, `cityId`, `visitorId`, and `sessionId` (see [Context Fields](#context-fields)). |
 | `ping` | none | Heartbeat keepalive. |
 
 #### Server-to-Client Event Types
@@ -1227,6 +1272,121 @@ Response:
     "id": "12",
     "status": "confirmed"
   }
+}
+```
+
+## Admin Analytics
+
+All admin analytics endpoints require `Authorization: Bearer <access_token>`.
+
+Date filters are optional and use ISO 8601 timestamps:
+
+| Param | Type | Required | Description |
+| --- | --- | --- | --- |
+| `from` | string | No | Start timestamp. |
+| `to` | string | No | End timestamp. |
+
+Sales metrics use `grandTotal`.
+
+`netSales` excludes `cancelled` and `returned` orders. `grossSales` excludes only `cancelled` orders.
+
+### GET `/api/admin/analytics/overview`
+
+Returns conversion-rate and high-level sales overview.
+
+Conversion formulas:
+
+- `visitToChatRate = chatSessions / visits * 100`
+- `chatToPurchaseRate = ordersWithChat / chatSessions * 100`
+- `visitToPurchaseRate = orders / visits * 100`
+
+`visits` counts distinct analytics sessions or visitors that sent `page_view` events.
+
+`chatSessions` counts conversations with a `visitorId` or `sessionId`.
+
+`ordersWithChat` counts orders linked to a conversation.
+
+Example:
+
+```http
+GET /api/admin/analytics/overview?from=2026-06-01T00:00:00Z&to=2026-06-30T23:59:59Z
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "visits": 1200,
+    "chatSessions": 180,
+    "orders": 45,
+    "ordersWithChat": 20,
+    "sales": 13500,
+    "visitToChatRate": 15,
+    "chatToPurchaseRate": 11.11,
+    "visitToPurchaseRate": 3.75
+  }
+}
+```
+
+### GET `/api/admin/analytics/orders`
+
+Returns order aggregation for the selected date range.
+
+Example:
+
+```http
+GET /api/admin/analytics/orders?from=2026-06-01T00:00:00Z&to=2026-06-30T23:59:59Z
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "sales": 13500,
+    "grossSales": 14100,
+    "netSales": 13500,
+    "totalOrders": 45,
+    "averageOrderValue": 300,
+    "byStatus": [
+      { "status": "new", "count": 10 },
+      { "status": "confirmed", "count": 8 },
+      { "status": "shipped", "count": 12 },
+      { "status": "delivered", "count": 11 },
+      { "status": "returned", "count": 2 },
+      { "status": "cancelled", "count": 2 }
+    ]
+  }
+}
+```
+
+### GET `/api/admin/analytics/sales-chart`
+
+Returns sales and order counts grouped by time interval.
+
+Query params:
+
+| Param | Type | Required | Description |
+| --- | --- | --- | --- |
+| `from` | string | No | Start timestamp. |
+| `to` | string | No | End timestamp. |
+| `interval` | string | No | `day`, `week`, or `month`. Default: `day`. |
+
+Example:
+
+```http
+GET /api/admin/analytics/sales-chart?from=2026-06-01T00:00:00Z&to=2026-06-30T23:59:59Z&interval=day
+```
+
+Response:
+
+```json
+{
+  "data": [
+    { "date": "2026-06-01T00:00:00Z", "sales": 1200, "orders": 4 },
+    { "date": "2026-06-02T00:00:00Z", "sales": 900, "orders": 3 }
+  ]
 }
 ```
 

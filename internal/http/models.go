@@ -100,6 +100,8 @@ type Order struct {
 	Currency        string    `json:"currency"`
 	CustomerName    string    `json:"customerName"`
 	CustomerPhone   string    `json:"customerPhone"`
+	VisitorID       *string   `json:"visitorId"`
+	SessionID       *string   `json:"sessionId"`
 	AddressRaw      string    `json:"addressRaw"`
 	CityID          *int64    `json:"cityId"`
 	AddressZone     *string   `json:"addressZone"`
@@ -113,6 +115,8 @@ type Conversation struct {
 	Title         string     `json:"title"`
 	CustomerName  *string    `json:"customerName"`
 	CustomerPhone *string    `json:"customerPhone"`
+	VisitorID     *string    `json:"visitorId"`
+	SessionID     *string    `json:"sessionId"`
 	Channel       string     `json:"channel"`
 	Status        string     `json:"status"`
 	LastMessageAt *time.Time `json:"lastMessageAt"`

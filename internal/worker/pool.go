@@ -73,6 +73,7 @@ func (p *Pool) process(ctx context.Context, workerID int, msg queue.Message) {
 
 	resp, err := p.agentSvc.HandleMessage(ctx, agent.MessageRequest{
 		ConversationID: conversationID,
+		SessionID:      sessionID,
 		Message:        msg.Content,
 		Context:        msg.Context,
 	})

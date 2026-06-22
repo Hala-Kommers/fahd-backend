@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
@@ -21,6 +22,8 @@ type OrderItemInput struct {
 type CreateOrderInput struct {
 	Items           []OrderItemInput `json:"items"`
 	ConversationID  int64            `json:"conversationId"`
+	VisitorID       string           `json:"visitorId"`
+	SessionID       string           `json:"sessionId"`
 	CustomerName    string           `json:"customerName"`
 	CustomerPhone   string           `json:"customerPhone"`
 	CustomerEmail   string           `json:"customerEmail"`
@@ -190,6 +193,8 @@ func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[
 		CustomerName    string  `gorm:"column:customer_name"`
 		CustomerPhone   string  `gorm:"column:customer_phone"`
 		CustomerEmail   string  `gorm:"column:customer_email"`
+		VisitorID       *string `gorm:"column:visitor_id"`
+		SessionID       *string `gorm:"column:session_id"`
 		AddressRaw      string  `gorm:"column:address_raw"`
 		CityID          int64   `gorm:"column:city_id"`
 		AddressZone     *string `gorm:"column:address_zone"`
@@ -201,6 +206,8 @@ func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[
 	}
 	addressZone := normalizedOptionalString(input.AddressZone)
 	addressDistrict := normalizedOptionalString(input.AddressDistrict)
+	visitorID := normalizedOptionalString(&input.VisitorID)
+	sessionID := normalizedOptionalString(&input.SessionID)
 
 	if err := tx.Table("orders").Create(&orderRow{
 		OrderNumber:     orderNumber,
@@ -217,6 +224,8 @@ func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[
 		CustomerName:    input.CustomerName,
 		CustomerPhone:   input.CustomerPhone,
 		CustomerEmail:   strings.TrimSpace(input.CustomerEmail),
+		VisitorID:       visitorID,
+		SessionID:       sessionID,
 		AddressRaw:      input.AddressRaw,
 		CityID:          input.CityID,
 		AddressZone:     addressZone,
@@ -252,6 +261,7 @@ func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[
 		return nil, fmt.Errorf("commit order: %w", err)
 	}
 	committed = true
+	recordOrderAnalyticsEvent(ctx, s.db, visitorID, sessionID, orderID, orderNumber)
 
 	itemsJSON := make([]map[string]any, 0, len(pricedItems))
 	for _, item := range pricedItems {
@@ -276,6 +286,8 @@ func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[
 		"grandTotal":      grandTotal,
 		"currency":        "SAR",
 		"conversationId":  input.ConversationID,
+		"visitorId":       visitorID,
+		"sessionId":       sessionID,
 		"paymentMethod":   paymentMethod,
 		"customerName":    input.CustomerName,
 		"customerPhone":   input.CustomerPhone,
@@ -324,6 +336,21 @@ func randomOrderNumber() (string, error) {
 		code[i] = alphabet[idx.Int64()]
 	}
 	return "ORD-" + string(code), nil
+}
+
+func recordOrderAnalyticsEvent(ctx context.Context, db *gorm.DB, visitorID, sessionID *string, orderID int64, orderNumber string) {
+	if visitorID == nil && sessionID == nil {
+		return
+	}
+	metadata, _ := json.Marshal(map[string]any{"orderId": orderID, "orderNumber": orderNumber})
+	row := map[string]any{
+		"visitor_id": visitorID,
+		"session_id": sessionID,
+		"event_type": "order_created",
+		"path":       "ai:create_order",
+		"metadata":   string(metadata),
+	}
+	_ = db.WithContext(ctx).Table("analytics_events").Create(&row).Error
 }
 
 func (s *OrderService) CalculateTotal(ctx context.Context, input CreateOrderInput) (map[string]any, error) {

@@ -18,22 +18,61 @@ func NewConversationService(db *gorm.DB) *ConversationService {
 	return &ConversationService{db: db}
 }
 
-func (s *ConversationService) StartOrContinue(ctx context.Context, conversationID int64) (int64, error) {
+func (s *ConversationService) StartOrContinue(ctx context.Context, conversationID int64, visitorID, sessionID string) (int64, error) {
 	if conversationID > 0 {
 		var exists int64
 		if err := s.db.WithContext(ctx).Table("conversations").Where("id = ?", conversationID).Count(&exists).Error; err != nil {
 			return 0, fmt.Errorf("check conversation: %w", err)
 		}
 		if exists > 0 {
+			updates := map[string]any{}
+			if visitorID != "" {
+				updates["visitor_id"] = visitorID
+			}
+			if sessionID != "" {
+				updates["session_id"] = sessionID
+			}
+			if len(updates) > 0 {
+				_ = s.db.WithContext(ctx).Table("conversations").Where("id = ?", conversationID).Updates(updates).Error
+			}
 			return conversationID, nil
 		}
 	}
 
-	var created struct{ ID int64 }
-	if err := s.db.WithContext(ctx).Raw("INSERT INTO conversations (status) VALUES (?) RETURNING id", "active").Scan(&created).Error; err != nil {
+	var visitor *string
+	if visitorID != "" {
+		visitor = &visitorID
+	}
+	var session *string
+	if sessionID != "" {
+		session = &sessionID
+	}
+	created := struct {
+		ID        int64   `gorm:"column:id"`
+		Status    string  `gorm:"column:status"`
+		VisitorID *string `gorm:"column:visitor_id"`
+		SessionID *string `gorm:"column:session_id"`
+	}{Status: "active", VisitorID: visitor, SessionID: session}
+	if err := s.db.WithContext(ctx).Table("conversations").Create(&created).Error; err != nil {
 		return 0, fmt.Errorf("create conversation: %w", err)
 	}
+	s.recordChatStarted(ctx, visitor, session, created.ID)
 	return created.ID, nil
+}
+
+func (s *ConversationService) recordChatStarted(ctx context.Context, visitorID, sessionID *string, conversationID int64) {
+	if visitorID == nil && sessionID == nil {
+		return
+	}
+	metadata, _ := json.Marshal(map[string]any{"conversationId": conversationID})
+	row := map[string]any{
+		"visitor_id": visitorID,
+		"session_id": sessionID,
+		"event_type": "chat_started",
+		"path":       "chat",
+		"metadata":   string(metadata),
+	}
+	_ = s.db.WithContext(ctx).Table("analytics_events").Create(&row).Error
 }
 
 func (s *ConversationService) SaveMessage(ctx context.Context, conversationID int64, role ai.Role, content string, metadata map[string]any) error {

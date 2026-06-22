@@ -136,13 +136,25 @@
           }
         },
         {
+          "name": "POST /api/analytics/events",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visitorId\": \"v_abc123\",\n  \"sessionId\": \"s_abc123\",\n  \"eventType\": \"page_view\",\n  \"path\": \"/products/oud-signature\",\n  \"referrer\": \"https://example.com\",\n  \"metadata\": {\n    \"productId\": 1\n  }\n}"
+            },
+            "url": "{{baseUrl}}/api/analytics/events"
+          }
+        },
+        {
           "name": "POST /api/orders",
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"paymentMethod\": \"COD\",\n  \"customerName\": \"Ahmed\",\n  \"customerPhone\": \"+966500000000\",\n  \"customerEmail\": \"ahmed@example.com\",\n  \"addressRaw\": \"Riyadh, Al Malqa\",\n  \"cityId\": 1,\n  \"addressZone\": \"Al Malqa\",\n  \"addressDistrict\": \"Al Aqiq\",\n  \"couponCode\": \"WELCOME10\",\n  \"items\": [\n    {\"productId\": 1, \"qty\": 1}\n  ]\n}"
+              "raw": "{\n  \"paymentMethod\": \"COD\",\n  \"customerName\": \"Ahmed\",\n  \"customerPhone\": \"+966500000000\",\n  \"customerEmail\": \"ahmed@example.com\",\n  \"visitorId\": \"v_abc123\",\n  \"sessionId\": \"s_abc123\",\n  \"addressRaw\": \"Riyadh, Al Malqa\",\n  \"cityId\": 1,\n  \"addressZone\": \"Al Malqa\",\n  \"addressDistrict\": \"Al Aqiq\",\n  \"couponCode\": \"WELCOME10\",\n  \"items\": [\n    {\"productId\": 1, \"qty\": 1}\n  ]\n}"
             },
             "url": "{{baseUrl}}/api/orders"
           }
@@ -333,6 +345,35 @@
             ],
             "body": { "mode": "raw", "raw": "{\n  \"status\": \"confirmed\"\n}" },
             "url": "{{baseUrl}}/api/admin/orders/{{orderId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin Analytics",
+      "item": [
+        {
+          "name": "GET /api/admin/analytics/overview",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/analytics/overview?from=2026-06-01T00:00:00Z&to=2026-06-30T23:59:59Z"
+          }
+        },
+        {
+          "name": "GET /api/admin/analytics/orders",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/analytics/orders?from=2026-06-01T00:00:00Z&to=2026-06-30T23:59:59Z"
+          }
+        },
+        {
+          "name": "GET /api/admin/analytics/sales-chart",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": "{{baseUrl}}/api/admin/analytics/sales-chart?from=2026-06-01T00:00:00Z&to=2026-06-30T23:59:59Z&interval=day"
           }
         }
       ]

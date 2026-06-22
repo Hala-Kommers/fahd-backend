@@ -34,6 +34,8 @@ type Service struct {
 
 type MessageRequest struct {
 	ConversationID int64
+	VisitorID      string
+	SessionID      string
 	Message        string
 	Context        map[string]any
 }
@@ -86,7 +88,18 @@ func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (Messag
 		return MessageResponse{}, fmt.Errorf("message is required")
 	}
 
-	conversationID, err := s.conversations.StartOrContinue(ctx, req.ConversationID)
+	visitorID := strings.TrimSpace(req.VisitorID)
+	sessionID := strings.TrimSpace(req.SessionID)
+	if req.Context != nil {
+		if v, ok := req.Context["visitorId"]; ok && visitorID == "" {
+			visitorID = strings.TrimSpace(fmt.Sprint(v))
+		}
+		if v, ok := req.Context["sessionId"]; ok && sessionID == "" {
+			sessionID = strings.TrimSpace(fmt.Sprint(v))
+		}
+	}
+
+	conversationID, err := s.conversations.StartOrContinue(ctx, req.ConversationID, visitorID, sessionID)
 	if err != nil {
 		slog.Error("sales assistant conversation setup failed", "requested_conversation_id", req.ConversationID, "error", err)
 		return MessageResponse{}, err
@@ -230,6 +243,12 @@ func (s *Service) HandleMessage(ctx context.Context, req MessageRequest) (Messag
 					call.Arguments = map[string]any{}
 				}
 				call.Arguments["conversationId"] = conversationID
+				if visitorID != "" {
+					call.Arguments["visitorId"] = visitorID
+				}
+				if sessionID != "" {
+					call.Arguments["sessionId"] = sessionID
+				}
 			}
 			result, execErr := tool.Execute(ctx, call.Arguments)
 			if execErr != nil {

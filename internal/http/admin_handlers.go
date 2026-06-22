@@ -493,6 +493,8 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 		CustomerName    string    `json:"customerName"`
 		CustomerPhone   string    `json:"customerPhone"`
 		CustomerEmail   *string   `json:"customerEmail"`
+		VisitorID       *string   `json:"visitorId"`
+		SessionID       *string   `json:"sessionId"`
 		CityID          *int64    `json:"cityId"`
 		AddressCity     string    `json:"addressCity"`
 		AddressZone     *string   `json:"addressZone"`
@@ -525,7 +527,7 @@ func (h *Handler) AdminListOrders(c *gin.Context) {
 
 	var rows []adminOrderListItem
 	q := h.db.Table("orders o").
-		Select("o.id, o.order_number, o.conversation_id, o.created_at, o.customer_name, o.customer_phone, o.customer_email, o.city_id, c.name AS address_city, o.address_zone, o.address_district, o.grand_total AS total, o.currency, o.payment_method, o.payment_status, o.status").
+		Select("o.id, o.order_number, o.conversation_id, o.created_at, o.customer_name, o.customer_phone, o.customer_email, o.visitor_id, o.session_id, o.city_id, c.name AS address_city, o.address_zone, o.address_district, o.grand_total AS total, o.currency, o.payment_method, o.payment_status, o.status").
 		Joins("LEFT JOIN cities c ON c.id = o.city_id").
 		Order("o.created_at DESC")
 
@@ -592,6 +594,8 @@ func (h *Handler) AdminGetOrder(c *gin.Context) {
 		CustomerName    string    `json:"customerName" gorm:"column:customer_name"`
 		CustomerPhone   string    `json:"customerPhone" gorm:"column:customer_phone"`
 		CustomerEmail   *string   `json:"customerEmail" gorm:"column:customer_email"`
+		VisitorID       *string   `json:"visitorId" gorm:"column:visitor_id"`
+		SessionID       *string   `json:"sessionId" gorm:"column:session_id"`
 		AddressRaw      string    `json:"addressRaw" gorm:"column:address_raw"`
 		CityID          *int64    `json:"cityId" gorm:"column:city_id"`
 		AddressCity     *string   `json:"addressCity" gorm:"column:address_city"`
@@ -603,7 +607,7 @@ func (h *Handler) AdminGetOrder(c *gin.Context) {
 
 	var order adminOrderDetail
 	if err := h.db.Table("orders o").
-		Select("o.id, o.order_number, o.conversation_id, o.created_at, o.updated_at, o.status, o.payment_method, o.payment_status, o.subtotal, o.shipping, o.discount, o.grand_total, o.currency, o.coupon_code, o.customer_name, o.customer_phone, o.customer_email, o.address_raw, o.city_id, c.name AS address_city, o.address_zone, o.address_district").
+		Select("o.id, o.order_number, o.conversation_id, o.created_at, o.updated_at, o.status, o.payment_method, o.payment_status, o.subtotal, o.shipping, o.discount, o.grand_total, o.currency, o.coupon_code, o.customer_name, o.customer_phone, o.customer_email, o.visitor_id, o.session_id, o.address_raw, o.city_id, c.name AS address_city, o.address_zone, o.address_district").
 		Joins("LEFT JOIN cities c ON c.id = o.city_id").
 		Where("o.id = ?", id).
 		Take(&order).Error; err != nil {
@@ -677,6 +681,8 @@ func (h *Handler) AdminGetOrder(c *gin.Context) {
 			Title         *string    `gorm:"column:title"`
 			CustomerName  *string    `gorm:"column:customer_name"`
 			CustomerPhone *string    `gorm:"column:customer_phone"`
+			VisitorID     *string    `gorm:"column:visitor_id"`
+			SessionID     *string    `gorm:"column:session_id"`
 			Channel       string     `gorm:"column:channel"`
 			Status        string     `gorm:"column:status"`
 			LastMessageAt *time.Time `gorm:"column:last_message_at"`
@@ -684,7 +690,7 @@ func (h *Handler) AdminGetOrder(c *gin.Context) {
 			UpdatedAt     time.Time  `gorm:"column:updated_at"`
 		}
 		if err := h.db.Table("conversations").
-			Select("id, title, customer_name, customer_phone, channel, status, last_message_at, created_at, updated_at").
+			Select("id, title, customer_name, customer_phone, visitor_id, session_id, channel, status, last_message_at, created_at, updated_at").
 			Where("id = ?", *order.ConversationID).
 			Take(&conversation).Error; err == nil {
 			type messageRow struct {
@@ -716,6 +722,8 @@ func (h *Handler) AdminGetOrder(c *gin.Context) {
 				"title":         conversation.Title,
 				"customerName":  conversation.CustomerName,
 				"customerPhone": conversation.CustomerPhone,
+				"visitorId":     conversation.VisitorID,
+				"sessionId":     conversation.SessionID,
 				"channel":       conversation.Channel,
 				"status":        conversation.Status,
 				"lastMessageAt": conversation.LastMessageAt,
@@ -1159,6 +1167,145 @@ func (h *Handler) AdminTestBotConnection(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true, "provider": provider}})
 }
 
+func (h *Handler) AdminAnalyticsOverview(c *gin.Context) {
+	filter, args := analyticsDateFilter(c, "created_at")
+	visits := h.countDistinctAnalyticsSessions("page_view", filter, args)
+	chatSessions := h.countConversations(filter, args, true)
+	totalOrders := h.countOrders(filter, args, "")
+	ordersWithChat := h.countOrders(filter, args, "conversation_id IS NOT NULL")
+	sales := h.sumOrdersSales(filter, args, false)
+
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"visits":              visits,
+		"chatSessions":        chatSessions,
+		"orders":              totalOrders,
+		"ordersWithChat":      ordersWithChat,
+		"sales":               sales,
+		"visitToChatRate":     percentage(chatSessions, visits),
+		"chatToPurchaseRate":  percentage(ordersWithChat, chatSessions),
+		"visitToPurchaseRate": percentage(totalOrders, visits),
+	}})
+}
+
+func (h *Handler) AdminAnalyticsOrders(c *gin.Context) {
+	filter, args := analyticsDateFilter(c, "created_at")
+	totalOrders := h.countOrders(filter, args, "")
+	grossSales := h.sumOrdersSales(filter, args, true)
+	netSales := h.sumOrdersSales(filter, args, false)
+	averageOrderValue := 0.0
+	if totalOrders > 0 {
+		averageOrderValue = roundMoney(netSales / float64(totalOrders))
+	}
+
+	type statusRow struct {
+		Status string `json:"status"`
+		Count  int64  `json:"count"`
+	}
+	var rows []statusRow
+	_ = h.db.Raw("SELECT status, COUNT(*) AS count FROM orders WHERE 1=1"+filter+" GROUP BY status", args...).Scan(&rows).Error
+	counts := map[string]int64{"new": 0, "confirmed": 0, "shipped": 0, "delivered": 0, "returned": 0, "cancelled": 0}
+	for _, row := range rows {
+		counts[row.Status] = row.Count
+	}
+	byStatus := make([]gin.H, 0, len(counts))
+	for _, status := range []string{"new", "confirmed", "shipped", "delivered", "returned", "cancelled"} {
+		byStatus = append(byStatus, gin.H{"status": status, "count": counts[status]})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"sales":             netSales,
+		"grossSales":        grossSales,
+		"netSales":          netSales,
+		"totalOrders":       totalOrders,
+		"averageOrderValue": averageOrderValue,
+		"byStatus":          byStatus,
+	}})
+}
+
+func (h *Handler) AdminAnalyticsSalesChart(c *gin.Context) {
+	interval := strings.TrimSpace(c.DefaultQuery("interval", "day"))
+	dateTrunc := "day"
+	switch interval {
+	case "day", "week", "month":
+		dateTrunc = interval
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid interval"})
+		return
+	}
+	filter, args := analyticsDateFilter(c, "created_at")
+	type chartRow struct {
+		Date   time.Time `json:"date"`
+		Sales  float64   `json:"sales"`
+		Orders int64     `json:"orders"`
+	}
+	var rows []chartRow
+	q := fmt.Sprintf("SELECT date_trunc('%s', created_at) AS date, COALESCE(SUM(grand_total),0) AS sales, COUNT(*) AS orders FROM orders WHERE status NOT IN ('cancelled', 'returned')%s GROUP BY date ORDER BY date ASC", dateTrunc, filter)
+	if err := h.db.Raw(q, args...).Scan(&rows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load sales chart"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": rows})
+}
+
+func analyticsDateFilter(c *gin.Context, column string) (string, []any) {
+	filter := ""
+	args := []any{}
+	if from := strings.TrimSpace(c.Query("from")); from != "" {
+		filter += " AND " + column + " >= ?"
+		args = append(args, from)
+	}
+	if to := strings.TrimSpace(c.Query("to")); to != "" {
+		filter += " AND " + column + " <= ?"
+		args = append(args, to)
+	}
+	return filter, args
+}
+
+func (h *Handler) countDistinctAnalyticsSessions(eventType string, filter string, args []any) int64 {
+	var count int64
+	q := "SELECT COUNT(DISTINCT COALESCE(NULLIF(session_id,''), NULLIF(visitor_id,''))) FROM analytics_events WHERE event_type = ?" + filter
+	allArgs := append([]any{eventType}, args...)
+	_ = h.db.Raw(q, allArgs...).Scan(&count).Error
+	return count
+}
+
+func (h *Handler) countConversations(filter string, args []any, requireSession bool) int64 {
+	var count int64
+	extra := ""
+	if requireSession {
+		extra = " AND (session_id IS NOT NULL OR visitor_id IS NOT NULL)"
+	}
+	_ = h.db.Raw("SELECT COUNT(*) FROM conversations WHERE 1=1"+filter+extra, args...).Scan(&count).Error
+	return count
+}
+
+func (h *Handler) countOrders(filter string, args []any, extra string) int64 {
+	var count int64
+	q := "SELECT COUNT(*) FROM orders WHERE 1=1" + filter
+	if extra != "" {
+		q += " AND " + extra
+	}
+	_ = h.db.Raw(q, args...).Scan(&count).Error
+	return count
+}
+
+func (h *Handler) sumOrdersSales(filter string, args []any, gross bool) float64 {
+	var sales float64
+	extra := " AND status NOT IN ('cancelled', 'returned')"
+	if gross {
+		extra = " AND status != 'cancelled'"
+	}
+	_ = h.db.Raw("SELECT COALESCE(SUM(grand_total),0) FROM orders WHERE 1=1"+filter+extra, args...).Scan(&sales).Error
+	return roundMoney(sales)
+}
+
+func percentage(numerator int64, denominator int64) float64 {
+	if denominator <= 0 {
+		return 0
+	}
+	return roundMoney((float64(numerator) / float64(denominator)) * 100)
+}
+
 func (h *Handler) AdminAIStats(c *gin.Context) {
 	dateFilter := ""
 	dateArgs := []any{}
@@ -1331,6 +1478,8 @@ func (h *Handler) AdminListConversations(c *gin.Context) {
 		Status                string    `json:"status"`
 		CustomerName          *string   `json:"customerName"`
 		CustomerPhone         *string   `json:"customerPhone"`
+		VisitorID             *string   `json:"visitorId"`
+		SessionID             *string   `json:"sessionId"`
 		CreatedAt             time.Time `json:"createdAt"`
 		UpdatedAt             time.Time `json:"updatedAt"`
 		MessageCount          int64     `json:"messageCount"`
@@ -1373,7 +1522,7 @@ func (h *Handler) AdminListConversations(c *gin.Context) {
 
 	var rows []convoRow
 	q := `
-		SELECT c.id, c.status, c.customer_name, c.customer_phone,
+		SELECT c.id, c.status, c.customer_name, c.customer_phone, c.visitor_id, c.session_id,
 		       c.created_at, c.updated_at,
 		       COALESCE(mc.cnt,0) AS message_count,
 		       COALESCE(lm.content,'') AS last_message,
@@ -1416,6 +1565,8 @@ func (h *Handler) AdminGetConversation(c *gin.Context) {
 		Title         *string    `json:"title" gorm:"column:title"`
 		CustomerName  *string    `json:"customerName" gorm:"column:customer_name"`
 		CustomerPhone *string    `json:"customerPhone" gorm:"column:customer_phone"`
+		VisitorID     *string    `json:"visitorId" gorm:"column:visitor_id"`
+		SessionID     *string    `json:"sessionId" gorm:"column:session_id"`
 		Channel       string     `json:"channel" gorm:"column:channel"`
 		Status        string     `json:"status" gorm:"column:status"`
 		LastMessageAt *time.Time `json:"lastMessageAt" gorm:"column:last_message_at"`
@@ -1425,7 +1576,7 @@ func (h *Handler) AdminGetConversation(c *gin.Context) {
 	}
 	var convo conversationDetail
 	if err := h.db.Table("conversations").
-		Select("id, title, customer_name, customer_phone, channel, status, last_message_at, created_at, updated_at").
+		Select("id, title, customer_name, customer_phone, visitor_id, session_id, channel, status, last_message_at, created_at, updated_at").
 		Where("id = ?", id).
 		Take(&convo).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
