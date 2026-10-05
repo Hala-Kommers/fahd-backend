@@ -232,6 +232,11 @@ func (h *Handler) GetProduct(c *gin.Context) {
 		}
 	}
 
+	if product.CompareAt != nil && h.sessionOfferExpired(c.Query("sessionId"), product.ID) {
+		data["price"] = *product.CompareAt
+		data["compareAt"] = nil
+		data["pricingTiers"] = []any{}
+	}
 	c.JSON(http.StatusOK, gin.H{"data": data})
 }
 
@@ -358,13 +363,14 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 		}
 
 		var product struct {
-			ID    int64
-			Title string
-			SKU   string
-			Price float64
+			ID        int64
+			Title     string
+			SKU       string
+			Price     float64
+			CompareAt *float64
 		}
 		if err := h.db.Table("products").
-			Select("id, title, sku, price").
+			Select("id, title, sku, price, compare_at").
 			Where("id = ? AND status = ?", item.ProductID, "active").
 			First(&product).Error; err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid product: %d", item.ProductID)})
@@ -390,6 +396,15 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 			}
 		}
 
+		if item.VariantID == nil {
+			var tier struct{ FinalPrice float64 }
+			if h.db.Table("pricing_tiers").Select("final_price").Where("product_id = ? AND qty <= ?", item.ProductID, item.Qty).Order("qty DESC").Limit(1).Find(&tier).RowsAffected > 0 {
+				unitPrice = tier.FinalPrice
+			}
+		}
+		if product.CompareAt != nil && req.SessionID != nil && h.sessionOfferExpired(*req.SessionID, item.ProductID) {
+			unitPrice = *product.CompareAt
+		}
 		lineTotal := roundMoney(unitPrice * float64(item.Qty))
 		subtotal += lineTotal
 		pricedItems = append(pricedItems, pricedItem{
