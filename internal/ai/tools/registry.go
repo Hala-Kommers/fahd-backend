@@ -20,7 +20,6 @@ func NewRegistry(db *gorm.DB) *Registry {
 		NewCompareProductsTool(productService),
 		NewResolveVariantTool(productService),
 		NewCalculateOrderTotalTool(orderService),
-		NewCreateOrderTool(orderService),
 		NewLookupOrderTool(orderService),
 	}}
 }

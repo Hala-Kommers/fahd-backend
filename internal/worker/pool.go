@@ -61,7 +61,25 @@ func (p *Pool) worker(ctx context.Context, id int, ch <-chan queue.Message) {
 }
 
 func (p *Pool) process(ctx context.Context, workerID int, msg queue.Message) {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
 	sessionID := msg.SessionID
+	started := time.Now()
+	first := false
+	onText := func(text string) {
+		if i := strings.Index(text, "["); i >= 0 {
+			text = text[:i]
+		}
+		if strings.TrimSpace(text) == "" {
+			return
+		}
+		if !first {
+			first = true
+			p.agentSvc.RecordLatency(ctx, sessionID, time.Since(started).Milliseconds())
+			slog.Info("bot first content", "latency_ms", time.Since(started).Milliseconds())
+		}
+		p.hub.SendToSession(sessionID, ws.ServerMessage{Type: "ai_chunk", Content: text})
+	}
 	slog.Debug("worker processing message", "worker_id", workerID, "session_id", sessionID)
 
 	p.hub.SendToSession(sessionID, ws.ServerMessage{Type: "ai_typing"})
@@ -76,12 +94,13 @@ func (p *Pool) process(ctx context.Context, workerID int, msg queue.Message) {
 		SessionID:      sessionID,
 		Message:        msg.Content,
 		Context:        msg.Context,
+		OnText:         onText,
 	})
 	if err != nil {
 		slog.Error("worker agent error", "worker_id", workerID, "session_id", sessionID, "error", err)
 		p.hub.SendToSession(sessionID, ws.ServerMessage{
 			Type:  "ai_error",
-			Error: "I'm having trouble processing your request. Please try again.",
+			Error: "تعذر الرد الآن. تقدر تكمل من زر طلب المنتج أو تحاول مرة ثانية.",
 		})
 		return
 	}
@@ -90,7 +109,7 @@ func (p *Pool) process(ctx context.Context, workerID int, msg queue.Message) {
 		p.sessionMgr.SetConversationID(sessionID, resp.ConversationID)
 	}
 
-	p.streamResponse(sessionID, resp.Reply)
+	p.hub.SendToSession(sessionID, ws.ServerMessage{Type: "ai_chunk", Content: resp.Reply})
 
 	actions := make([]any, len(resp.Actions))
 	for i, a := range resp.Actions {
@@ -99,32 +118,8 @@ func (p *Pool) process(ctx context.Context, workerID int, msg queue.Message) {
 
 	p.hub.SendToSession(sessionID, ws.ServerMessage{
 		Type:    "ai_done",
+		Content: resp.Reply,
 		Actions: actions,
 		Meta:    resp.Meta,
 	})
-}
-
-func (p *Pool) streamResponse(sessionID, reply string) {
-	reply = strings.TrimSpace(reply)
-	if reply == "" {
-		return
-	}
-
-	words := strings.Fields(reply)
-	if len(words) == 0 {
-		return
-	}
-
-	buf := strings.Builder{}
-	for _, word := range words {
-		if buf.Len() > 0 {
-			buf.WriteString(" ")
-		}
-		buf.WriteString(word)
-		p.hub.SendToSession(sessionID, ws.ServerMessage{
-			Type:    "ai_chunk",
-			Content: buf.String(),
-		})
-		time.Sleep(15 * time.Millisecond)
-	}
 }

@@ -138,6 +138,8 @@ func (t *CalculateOrderTotalTool) Execute(ctx context.Context, arguments map[str
 	input := services.CreateOrderInput{
 		Items:      items,
 		CouponCode: stringArg(arguments, "couponCode"),
+		SessionID:  stringArg(arguments, "sessionId"),
+		CityID:     int64Arg(arguments, "cityId"),
 	}
 
 	data, err := t.orders.CalculateTotal(ctx, input)

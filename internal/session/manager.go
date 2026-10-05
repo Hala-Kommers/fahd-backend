@@ -68,7 +68,14 @@ func (m *Manager) Authenticate(sessionID, token string) (*Session, error) {
 	sess, ok := m.sessions[sessionID]
 	m.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("session not found")
+		sess = &Session{ID: sessionID, Token: token, CreatedAt: time.Now(), LastUsedAt: time.Now()}
+		m.mu.Lock()
+		if current, exists := m.sessions[sessionID]; exists {
+			sess = current
+		} else {
+			m.sessions[sessionID] = sess
+		}
+		m.mu.Unlock()
 	}
 	m.mu.Lock()
 	sess.LastUsedAt = time.Now()

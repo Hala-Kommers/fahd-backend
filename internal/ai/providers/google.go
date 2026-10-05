@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -60,12 +61,17 @@ func (p *GoogleProvider) Generate(ctx context.Context, req ai.GenerateRequest) (
 		return ai.GenerateResponse{}, fmt.Errorf("marshal google request: %w", err)
 	}
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", p.model, p.apiKey)
+	method := "generateContent"
+	if req.OnText != nil {
+		method = "streamGenerateContent?alt=sse"
+	}
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:%s", p.model, method)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return ai.GenerateResponse{}, fmt.Errorf("create google request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-goog-api-key", p.apiKey)
 
 	res, err := p.client.Do(httpReq)
 	if err != nil {
@@ -73,7 +79,10 @@ func (p *GoogleProvider) Generate(ctx context.Context, req ai.GenerateRequest) (
 	}
 	defer res.Body.Close()
 
-	resBody, err := io.ReadAll(res.Body)
+	if req.OnText != nil && res.StatusCode >= 200 && res.StatusCode < 300 {
+		return readGoogleStream(res.Body, req.OnText)
+	}
+	resBody, err := io.ReadAll(io.LimitReader(res.Body, 2<<20))
 	if err != nil {
 		return ai.GenerateResponse{}, fmt.Errorf("read google response: %w", err)
 	}
@@ -173,7 +182,7 @@ type googleUsageMetadata struct {
 }
 
 type googleGenerateResponse struct {
-	Candidates    []struct {
+	Candidates []struct {
 		Content googleContent `json:"content"`
 	} `json:"candidates"`
 	UsageMetadata *googleUsageMetadata `json:"usageMetadata,omitempty"`
@@ -183,12 +192,11 @@ func (r googleGenerateResponse) Text() string {
 	if len(r.Candidates) == 0 || len(r.Candidates[0].Content.Parts) == 0 {
 		return ""
 	}
+	var b strings.Builder
 	for _, part := range r.Candidates[0].Content.Parts {
-		if part.Text != "" {
-			return part.Text
-		}
+		b.WriteString(part.Text)
 	}
-	return ""
+	return b.String()
 }
 
 func (r googleGenerateResponse) ToolCalls() []ai.ToolCall {
@@ -233,7 +241,7 @@ func googleContents(messages []ai.Message) []googleContent {
 				responseData = map[string]any{"result": message.Content}
 			}
 			contents = append(contents, googleContent{
-				Role:  "function",
+				Role: "function",
 				Parts: []googlePart{{
 					FunctionResponse: &googleFunctionResponse{
 						Name:     name,
@@ -339,4 +347,53 @@ func sanitizeGoogleSchema(value any) any {
 	default:
 		return value
 	}
+}
+
+func readGoogleStream(r io.Reader, onText func(string)) (ai.GenerateResponse, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 4096), 2<<20)
+	result := ai.GenerateResponse{}
+	var data strings.Builder
+	consume := func() error {
+		raw := strings.TrimSpace(data.String())
+		data.Reset()
+		if raw == "" || raw == "[DONE]" {
+			return nil
+		}
+		var chunk googleGenerateResponse
+		if e := json.Unmarshal([]byte(raw), &chunk); e != nil {
+			return e
+		}
+		text := chunk.Text()
+		if text != "" {
+			result.Content += text
+			onText(result.Content)
+		}
+		for _, call := range chunk.ToolCalls() {
+			call.ID = fmt.Sprintf("google_tool_call_%d", len(result.ToolCalls)+1)
+			result.ToolCalls = append(result.ToolCalls, call)
+		}
+		if chunk.UsageMetadata != nil {
+			result.Usage = parseUsage(chunk.UsageMetadata)
+		}
+		return nil
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if e := consume(); e != nil {
+				return result, e
+			}
+		} else if strings.HasPrefix(line, "data:") {
+			data.WriteString(strings.TrimPrefix(line, "data:"))
+			data.WriteByte('\n')
+		}
+	}
+	if e := scanner.Err(); e != nil {
+		return result, e
+	}
+	if e := consume(); e != nil {
+		return result, e
+	}
+	return result, nil
 }
