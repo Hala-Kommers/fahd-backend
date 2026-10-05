@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"fahd-backend/internal/ai/services"
 	"fahd-backend/internal/config"
+	"fahd-backend/internal/session"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -76,8 +78,8 @@ func (h *Handler) ListProducts(c *gin.Context) {
 		query = query.Where("categories.slug = ?", category)
 	}
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
-		like := "%" + search + "%"
-		query = query.Where("products.title ILIKE ? OR products.sku ILIKE ?", like, like)
+		like := "%" + services.NormalizeSearch(search) + "%"
+		query = query.Where("normalize_arabic(products.title || ' ' || products.sku || ' ' || COALESCE(products.description_short,'')) ILIKE ?", like)
 	}
 	if minPrice := strings.TrimSpace(c.Query("minPrice")); minPrice != "" {
 		if value, err := strconv.ParseFloat(minPrice, 64); err == nil {
@@ -237,6 +239,22 @@ func (h *Handler) GetProduct(c *gin.Context) {
 		data["compareAt"] = nil
 		data["pricingTiers"] = []any{}
 	}
+	var content struct {
+		VideoURL          *string
+		RelatedProductIDs []byte
+	}
+	h.db.Table("products").Select("video_url,related_product_ids").Where("id=?", product.ID).Take(&content)
+	data["videoUrl"] = content.VideoURL
+	var ids []int64
+	_ = json.Unmarshal(content.RelatedProductIDs, &ids)
+	data["relatedProductIds"] = ids
+	reviews := []struct {
+		Rating      int    `json:"rating"`
+		Body        string `json:"body"`
+		DisplayName string `json:"displayName"`
+	}{}
+	h.db.Table("product_reviews").Select("rating,body,display_name").Where("product_id=?", product.ID).Order("created_at DESC").Limit(20).Find(&reviews)
+	data["reviews"] = reviews
 	c.JSON(http.StatusOK, gin.H{"data": data})
 }
 
@@ -288,286 +306,66 @@ func (h *Handler) ValidateCoupon(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"code": coupon.Code, "discount": coupon.Value, "type": coupon.Type}})
 }
 
-type createOrderRequest struct {
-	PaymentMethod   string            `json:"paymentMethod"`
-	CustomerName    string            `json:"customerName"`
-	CustomerPhone   string            `json:"customerPhone"`
-	CustomerEmail   string            `json:"customerEmail"`
-	VisitorID       *string           `json:"visitorId"`
-	SessionID       *string           `json:"sessionId"`
-	AddressRaw      string            `json:"addressRaw"`
-	CityID          int64             `json:"cityId"`
-	AddressZone     *string           `json:"addressZone"`
-	AddressDistrict *string           `json:"addressDistrict"`
-	CouponCode      string            `json:"couponCode"`
-	Items           []createOrderItem `json:"items"`
-}
-
-type createOrderItem struct {
-	ProductID int64  `json:"productId"`
-	VariantID *int64 `json:"variantId"`
-	Qty       int    `json:"qty"`
-}
-
 func (h *Handler) CreateOrder(c *gin.Context) {
-	var req createOrderRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid order payload"})
+	var in services.CreateOrderInput
+	if c.ShouldBindJSON(&in) != nil {
+		c.JSON(400, gin.H{"error": "بيانات الطلب غير صالحة"})
 		return
 	}
-	if req.CustomerName == "" || req.CustomerPhone == "" || req.AddressRaw == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "customer name, phone, and address are required"})
+	if !h.validChatSession(in.SessionID, in.SessionToken) {
+		c.JSON(401, gin.H{"error": "انتهت جلسة الشات؛ أعد فتح المحادثة"})
 		return
 	}
-	if req.CityID <= 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cityId is required"})
-		return
-	}
-	var city City
-	if err := h.db.Where("id = ? AND is_active = TRUE", req.CityID).First(&city).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cityId"})
-		return
-	}
-	paymentMethod := strings.TrimSpace(req.PaymentMethod)
-	switch strings.ToLower(paymentMethod) {
-	case "cod":
-		paymentMethod = "COD"
-	case "paymob":
-		paymentMethod = "Paymob"
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payment method"})
-		return
-	}
-	if len(req.Items) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "items are required"})
-		return
-	}
-
-	type pricedItem struct {
-		ProductID int64
-		VariantID *int64
-		Title     string
-		SKU       string
-		Qty       int
-		UnitPrice float64
-		LineTotal float64
-	}
-
-	pricedItems := make([]pricedItem, 0, len(req.Items))
-	subtotal := 0.0
-
-	for _, item := range req.Items {
-		if item.ProductID <= 0 || item.Qty <= 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "each item must include valid productId and qty"})
+	if in.SessionID != "" {
+		if _, e := services.EnsureConversation(c.Request.Context(), h.db, in.SessionID, in.VisitorID); e != nil {
+			c.JSON(500, gin.H{"error": "تعذر تجهيز الطلب"})
 			return
 		}
-
-		var product struct {
-			ID        int64
-			Title     string
-			SKU       string
-			Price     float64
-			CompareAt *float64
-		}
-		if err := h.db.Table("products").
-			Select("id, title, sku, price, compare_at").
-			Where("id = ? AND status = ?", item.ProductID, "active").
-			First(&product).Error; err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid product: %d", item.ProductID)})
-			return
-		}
-
-		unitPrice := product.Price
-		if item.VariantID != nil {
-			var variant struct {
-				ID            int64
-				ProductID     int64
-				PriceOverride *float64
-			}
-			if err := h.db.Table("product_variants").
-				Select("id, product_id, price_override").
-				Where("id = ? AND product_id = ? AND is_active = TRUE", *item.VariantID, item.ProductID).
-				First(&variant).Error; err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid variant for product: %d", item.ProductID)})
-				return
-			}
-			if variant.PriceOverride != nil {
-				unitPrice = *variant.PriceOverride
-			}
-		}
-
-		if item.VariantID == nil {
-			var tier struct{ FinalPrice float64 }
-			if h.db.Table("pricing_tiers").Select("final_price").Where("product_id = ? AND qty <= ?", item.ProductID, item.Qty).Order("qty DESC").Limit(1).Find(&tier).RowsAffected > 0 {
-				unitPrice = tier.FinalPrice
-			}
-		}
-		if product.CompareAt != nil && req.SessionID != nil && h.sessionOfferExpired(*req.SessionID, item.ProductID) {
-			unitPrice = *product.CompareAt
-		}
-		lineTotal := roundMoney(unitPrice * float64(item.Qty))
-		subtotal += lineTotal
-		pricedItems = append(pricedItems, pricedItem{
-			ProductID: item.ProductID,
-			VariantID: item.VariantID,
-			Title:     product.Title,
-			SKU:       product.SKU,
-			Qty:       item.Qty,
-			UnitPrice: roundMoney(unitPrice),
-			LineTotal: lineTotal,
-		})
 	}
-
-	subtotal = roundMoney(subtotal)
-	shipping := 0.0
-	discount := 0.0
-
-	if code := strings.TrimSpace(req.CouponCode); code != "" {
-		var coupon struct {
-			Code      string
-			Type      string
-			Value     float64
-			MinOrder  *float64
-			ExpiresAt *time.Time
-			IsActive  bool
-		}
-		if err := h.db.Table("coupons").
-			Select("code, type, value, min_order, expires_at, is_active").
-			Where("LOWER(code) = LOWER(?) AND is_active = TRUE", code).
-			First(&coupon).Error; err == nil {
-			valid := true
-			if coupon.ExpiresAt != nil && coupon.ExpiresAt.Before(time.Now()) {
-				valid = false
-			}
-			if coupon.MinOrder != nil && subtotal < *coupon.MinOrder {
-				valid = false
-			}
-			if valid {
-				if coupon.Type == "percentage" {
-					discount = roundMoney((subtotal * coupon.Value) / 100)
-				} else {
-					discount = roundMoney(coupon.Value)
-				}
-			}
-		}
-	}
-
-	if discount > subtotal {
-		discount = subtotal
-	}
-	grandTotal := roundMoney(subtotal + shipping - discount)
-	visitorID := normalizedOptionalString(req.VisitorID)
-	sessionID := normalizedOptionalString(req.SessionID)
-	addressZone := normalizedOptionalString(req.AddressZone)
-	addressDistrict := normalizedOptionalString(req.AddressDistrict)
-
-	orderNumber, err := generateUniqueOrderNumber(h.db)
+	result, err := services.NewOrderService(h.db).Create(c.Request.Context(), in)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate order number"})
-		return
-	}
-
-	order := Order{
-		OrderNumber:     orderNumber,
-		Status:          "new",
-		PaymentMethod:   paymentMethod,
-		Subtotal:        subtotal,
-		Shipping:        shipping,
-		Discount:        discount,
-		GrandTotal:      grandTotal,
-		Currency:        "SAR",
-		CustomerName:    req.CustomerName,
-		CustomerPhone:   req.CustomerPhone,
-		VisitorID:       visitorID,
-		SessionID:       sessionID,
-		AddressRaw:      req.AddressRaw,
-		CityID:          &req.CityID,
-		AddressZone:     addressZone,
-		AddressDistrict: addressDistrict,
-	}
-
-	tx := h.db.Begin()
-	if tx.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
-		return
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
+		status := 400
+		if strings.HasPrefix(err.Error(), "PRICE_CHANGED:") {
+			status = 409
 		}
-	}()
-
-	if err := tx.Table("orders").Create(&map[string]any{
-		"order_number":     order.OrderNumber,
-		"status":           order.Status,
-		"payment_method":   order.PaymentMethod,
-		"payment_status":   "pending",
-		"subtotal":         order.Subtotal,
-		"shipping":         order.Shipping,
-		"discount":         order.Discount,
-		"grand_total":      order.GrandTotal,
-		"currency":         order.Currency,
-		"coupon_code":      strings.TrimSpace(req.CouponCode),
-		"customer_name":    req.CustomerName,
-		"customer_phone":   req.CustomerPhone,
-		"customer_email":   strings.TrimSpace(req.CustomerEmail),
-		"visitor_id":       visitorID,
-		"session_id":       sessionID,
-		"address_raw":      req.AddressRaw,
-		"city_id":          req.CityID,
-		"address_zone":     addressZone,
-		"address_district": addressDistrict,
-	}).Error; err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create order"})
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
-
-	var created struct{ ID int64 }
-	if err := tx.Table("orders").Select("id").Where("order_number = ?", order.OrderNumber).First(&created).Error; err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read created order"})
+	c.JSON(201, gin.H{"data": result})
+}
+func (h *Handler) QuoteOrder(c *gin.Context) {
+	var in services.CreateOrderInput
+	if c.ShouldBindJSON(&in) != nil {
+		c.JSON(400, gin.H{"error": "بيانات السعر غير صالحة"})
 		return
 	}
-
-	for _, item := range pricedItems {
-		payload := map[string]any{
-			"order_id":   created.ID,
-			"product_id": item.ProductID,
-			"sku":        item.SKU,
-			"title":      item.Title,
-			"qty":        item.Qty,
-			"unit_price": item.UnitPrice,
-			"line_total": item.LineTotal,
-		}
-		if item.VariantID != nil {
-			payload["variant_id"] = *item.VariantID
-		}
-		if err := tx.Table("order_items").Create(&payload).Error; err != nil {
-			tx.Rollback()
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create order items"})
-			return
-		}
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to finalize order"})
+	if !h.validChatSession(in.SessionID, in.SessionToken) {
+		c.JSON(401, gin.H{"error": "جلسة غير صالحة"})
 		return
 	}
-	recordAnalyticsEvent(h.db, analyticsEventInput{VisitorID: visitorID, SessionID: sessionID, EventType: "order_created", Path: c.Request.URL.Path, UserAgent: c.Request.UserAgent(), Metadata: map[string]any{"orderId": created.ID, "orderNumber": order.OrderNumber}})
-
-	order.ID = created.ID
-
-	c.JSON(http.StatusCreated, gin.H{"data": order})
+	q, e := services.NewOrderService(h.db).Quote(c.Request.Context(), in)
+	if e != nil {
+		c.JSON(400, gin.H{"error": e.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"data": q})
+}
+func (h *Handler) validChatSession(id, token string) bool {
+	if id == "" {
+		return true
+	}
+	claims, e := session.NewTokenService(h.cfg.JWTSecret, time.Hour).Validate(token)
+	return e == nil && claims.SessionID == id
 }
 
 type analyticsEventRequest struct {
-	VisitorID string         `json:"visitorId"`
-	SessionID string         `json:"sessionId"`
-	EventType string         `json:"eventType"`
-	Path      string         `json:"path"`
-	Referrer  string         `json:"referrer"`
-	Metadata  map[string]any `json:"metadata"`
+	VisitorID    string         `json:"visitorId"`
+	SessionID    string         `json:"sessionId"`
+	EventType    string         `json:"eventType"`
+	Path         string         `json:"path"`
+	Referrer     string         `json:"referrer"`
+	Metadata     map[string]any `json:"metadata"`
+	SessionToken string         `json:"sessionToken"`
 }
 
 func (h *Handler) TrackAnalyticsEvent(c *gin.Context) {
@@ -582,13 +380,23 @@ func (h *Handler) TrackAnalyticsEvent(c *gin.Context) {
 	if eventType == "" {
 		eventType = "page_view"
 	}
-	if !isValidAnalyticsEventType(eventType) {
+	if !isValidAnalyticsEventType(eventType) || eventType == "bot_latency" || eventType == "order_created" || strings.HasPrefix(eventType, "order_") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid eventType"})
 		return
 	}
 	if visitorID == "" && sessionID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "visitorId or sessionId is required"})
 		return
+	}
+	if eventType != "page_view" && eventType != "web_vital" {
+		if sessionID == "" || !h.validChatSession(sessionID, req.SessionToken) {
+			c.JSON(401, gin.H{"error": "invalid session"})
+			return
+		}
+		if _, err := services.Engage(c.Request.Context(), h.db, sessionID, visitorID, req.Metadata); err != nil {
+			c.JSON(500, gin.H{"error": "tracking unavailable"})
+			return
+		}
 	}
 	path := strings.TrimSpace(req.Path)
 	if path == "" {
@@ -646,7 +454,7 @@ func recordAnalyticsEvent(db *gorm.DB, input analyticsEventInput) error {
 
 func isValidAnalyticsEventType(eventType string) bool {
 	switch eventType {
-	case "page_view", "chat_started", "order_created":
+	case "page_view", "chat_started", "order_created", "chat_engaged", "offer_viewed", "offer_selected", "checkout_started", "checkout_error", "complement_clicked", "web_vital", "bot_latency":
 		return true
 	default:
 		return false
@@ -699,16 +507,11 @@ func randomOrderNumber() (string, error) {
 }
 
 func (h *Handler) GetOrder(c *gin.Context) {
-	id := c.Param("id")
-	var order Order
-	if err := h.db.Where("id = ?", id).First(&order).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load order"})
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	data, e := services.NewOrderService(h.db).Track(c.Request.Context(), id, c.GetHeader("X-Order-Token"))
+	if e != nil {
+		c.JSON(404, gin.H{"error": "رابط التتبع غير صالح"})
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{"data": order})
+	c.JSON(200, gin.H{"data": data})
 }

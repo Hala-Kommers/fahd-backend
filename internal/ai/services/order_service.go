@@ -2,11 +2,11 @@ package services
 
 import (
 	"context"
-	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"math"
-	"math/big"
 	"strings"
 	"time"
 
@@ -33,6 +33,9 @@ type CreateOrderInput struct {
 	CityID          int64            `json:"cityId"`
 	PaymentMethod   string           `json:"paymentMethod"`
 	CouponCode      string           `json:"couponCode"`
+	QuoteID         string           `json:"quoteId"`
+	IdempotencyKey  string           `json:"idempotencyKey"`
+	SessionToken    string           `json:"sessionToken"`
 }
 
 type OrderService struct {
@@ -43,435 +46,127 @@ func NewOrderService(db *gorm.DB) *OrderService {
 	return &OrderService{db: db}
 }
 
-func (s *OrderService) Create(ctx context.Context, input CreateOrderInput) (map[string]any, error) {
-	if len(input.Items) == 0 {
-		return nil, fmt.Errorf("items are required")
+func (s *OrderService) Create(ctx context.Context, in CreateOrderInput) (map[string]any, error) {
+	in.CustomerName = strings.TrimSpace(in.CustomerName)
+	in.CustomerPhone = NormalizePhone(in.CustomerPhone)
+	in.AddressRaw = strings.TrimSpace(in.AddressRaw)
+	if in.CustomerName == "" || in.AddressRaw == "" || !saudiPhone.MatchString(in.CustomerPhone) || in.CityID <= 0 {
+		return nil, fmt.Errorf("راجع الاسم ورقم الجوال السعودي والعنوان والمدينة")
 	}
-	if input.CustomerName == "" || input.CustomerPhone == "" || input.AddressRaw == "" {
-		return nil, fmt.Errorf("customer name, phone, and address are required")
+	if strings.ToLower(in.PaymentMethod) != "cod" {
+		return nil, fmt.Errorf("الدفع عند الاستلام هو المتاح حاليًا")
 	}
-	if input.CityID <= 0 {
-		return nil, fmt.Errorf("cityId is required")
+	if _, e := uuid.Parse(in.IdempotencyKey); e != nil {
+		return nil, fmt.Errorf("معرّف الطلب مطلوب")
 	}
-	rawPayment := strings.TrimSpace(input.PaymentMethod)
-	paymentMethod := strings.ToLower(rawPayment)
-	switch paymentMethod {
-	case "cod", "paymob":
-	default:
-		return nil, fmt.Errorf("invalid payment method, must be 'cod' or 'paymob'")
-	}
-
-	var city struct{ Name string }
-	if err := s.db.WithContext(ctx).Table("cities").
-		Select("name").
-		Where("id = ? AND is_active = TRUE", input.CityID).
-		First(&city).Error; err != nil {
-		return nil, fmt.Errorf("invalid cityId: city not found or inactive")
-	}
-
-	type pricedItem struct {
-		ProductID int64
-		VariantID *int64
-		Title     string
-		SKU       string
-		Qty       int
-		UnitPrice float64
-		LineTotal float64
-	}
-	pricedItems := make([]pricedItem, 0, len(input.Items))
-	subtotal := 0.0
-
-	for _, item := range input.Items {
-		if item.ProductID <= 0 || item.Qty <= 0 {
-			return nil, fmt.Errorf("each item must include valid productId and qty")
+	// Stable across refreshing a quote after a network error.
+	request := in
+	request.QuoteID = ""
+	request.SessionToken = ""
+	request.ConversationID = 0
+	hash := digest(request)
+	var result map[string]any
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if e := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", "order:"+in.IdempotencyKey).Error; e != nil {
+			return e
 		}
-		var product struct {
-			ID    int64
-			Title string
-			SKU   string
-			Price float64
+		var existing struct {
+			ID                         int64
+			RequestHash, TrackingToken string
 		}
-		if err := s.db.WithContext(ctx).Table("products").
-			Select("id, title, sku, price").
-			Where("id = ? AND status = ?", item.ProductID, "active").
-			First(&product).Error; err != nil {
-			return nil, fmt.Errorf("invalid product: %d", item.ProductID)
+		r := tx.Table("orders").Where("idempotency_key=?", in.IdempotencyKey).Limit(1).Find(&existing)
+		if r.Error != nil {
+			return r.Error
 		}
-		unitPrice := product.Price
-		if item.VariantID != nil {
-			var variant struct {
-				ID            int64
-				PriceOverride *float64
+		if r.RowsAffected > 0 {
+			if existing.RequestHash != hash {
+				return fmt.Errorf("تم استخدام معرّف الطلب لبيانات أخرى")
 			}
-			if err := s.db.WithContext(ctx).Table("product_variants").
-				Select("id, price_override").
-				Where("id = ? AND product_id = ? AND is_active = TRUE", *item.VariantID, item.ProductID).
-				First(&variant).Error; err != nil {
-				return nil, fmt.Errorf("invalid variant for product: %d", item.ProductID)
+			var e error
+			result, e = publicOrder(tx, existing.ID, existing.TrackingToken)
+			return e
+		}
+		var quoted quoteRow
+		if e := tx.Table("checkout_quotes").Where("id=? AND session_id=?", in.QuoteID, in.SessionID).Take(&quoted).Error; e != nil {
+			return fmt.Errorf("راجع ملخص السعر قبل إرسال الطلب")
+		}
+		if quoted.RequestHash != quoteRequestHash(in) || !time.Now().Before(quoted.ExpiresAt) {
+			return fmt.Errorf("PRICE_CHANGED: انتهت صلاحية السعر؛ راجع السعر الجديد ثم أكد الطلب")
+		}
+		q, e := s.price(ctx, tx, in, true)
+		if e != nil {
+			return e
+		}
+		if quoted.PricingHash != pricingHash(q) {
+			return fmt.Errorf("PRICE_CHANGED: تغير السعر؛ راجع الملخص ثم أكد الطلب")
+		}
+		var conv any
+		if in.SessionID != "" {
+			var id int64
+			if e := tx.Table("conversations").Select("id").Where("session_id=?", in.SessionID).Order("id DESC").Limit(1).Scan(&id).Error; e != nil {
+				return e
 			}
-			if variant.PriceOverride != nil {
-				unitPrice = *variant.PriceOverride
+			if id > 0 {
+				conv = id
 			}
 		}
-		lineTotal := roundMoney(unitPrice * float64(item.Qty))
-		subtotal += lineTotal
-		pricedItems = append(pricedItems, pricedItem{
-			ProductID: item.ProductID,
-			VariantID: item.VariantID,
-			Title:     product.Title,
-			SKU:       product.SKU,
-			Qty:       item.Qty,
-			UnitPrice: roundMoney(unitPrice),
-			LineTotal: lineTotal,
-		})
-	}
-
-	subtotal = roundMoney(subtotal)
-	shipping := 0.0
-	discount := 0.0
-
-	if code := strings.TrimSpace(input.CouponCode); code != "" {
-		var coupon struct {
-			Type      string
-			Value     float64
-			MinOrder  *float64
-			ExpiresAt *time.Time
+		tracking := uuid.NewString() + uuid.NewString()
+		number := "ORD-" + strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))[:12]
+		row := map[string]any{"order_number": number, "status": "new", "payment_method": "cod", "payment_status": "pending", "subtotal": q.Subtotal, "shipping": q.Shipping, "discount": q.Discount, "grand_total": q.GrandTotal, "currency": "SAR", "coupon_code": strings.TrimSpace(in.CouponCode), "conversation_id": conv, "customer_name": in.CustomerName, "customer_phone": in.CustomerPhone, "customer_email": in.CustomerEmail, "visitor_id": in.VisitorID, "session_id": in.SessionID, "address_raw": in.AddressRaw, "city_id": in.CityID, "address_zone": in.AddressZone, "address_district": in.AddressDistrict, "idempotency_key": in.IdempotencyKey, "request_hash": hash, "tracking_token": tracking, "stock_reserved": true}
+		if e := tx.Table("orders").Create(row).Error; e != nil {
+			return e
 		}
-		if err := s.db.WithContext(ctx).Table("coupons").
-			Select("type, value, min_order, expires_at").
-			Where("LOWER(code) = LOWER(?) AND is_active = TRUE", code).
-			First(&coupon).Error; err == nil {
-			valid := true
-			if coupon.ExpiresAt != nil && coupon.ExpiresAt.Before(time.Now()) {
-				valid = false
-			}
-			if coupon.MinOrder != nil && subtotal < *coupon.MinOrder {
-				valid = false
-			}
-			if valid {
-				if coupon.Type == "percentage" {
-					discount = roundMoney((subtotal * coupon.Value) / 100)
-				} else {
-					discount = roundMoney(coupon.Value)
-				}
+		var id int64
+		if e := tx.Table("orders").Select("id").Where("order_number=?", number).Scan(&id).Error; e != nil {
+			return e
+		}
+		for _, it := range q.Items {
+			if e := tx.Table("order_items").Create(map[string]any{"order_id": id, "product_id": it.ProductID, "variant_id": it.VariantID, "title": it.Title, "sku": it.SKU, "qty": it.Qty, "unit_price": it.UnitPrice, "line_total": it.LineTotal}).Error; e != nil {
+				return e
 			}
 		}
-	}
-	if discount > subtotal {
-		discount = subtotal
-	}
-	grandTotal := roundMoney(subtotal + shipping - discount)
-
-	orderNumber, err := generateUniqueOrderNumber(ctx, s.db)
-	if err != nil {
-		return nil, fmt.Errorf("generate order number: %w", err)
-	}
-
-	tx := s.db.WithContext(ctx).Begin()
-	if tx.Error != nil {
-		return nil, fmt.Errorf("begin transaction: %w", tx.Error)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			tx.Rollback()
+		meta, _ := json.Marshal(map[string]any{"orderId": id, "conversationId": conv})
+		if e := tx.Table("analytics_events").Create(map[string]any{"event_type": "order_created", "session_id": in.SessionID, "visitor_id": in.VisitorID, "metadata": string(meta)}).Error; e != nil {
+			return e
 		}
-	}()
-
-	type orderRow struct {
-		OrderNumber     string  `gorm:"column:order_number"`
-		ConversationID  *int64  `gorm:"column:conversation_id"`
-		Status          string  `gorm:"column:status"`
-		PaymentMethod   string  `gorm:"column:payment_method"`
-		PaymentStatus   string  `gorm:"column:payment_status"`
-		Subtotal        float64 `gorm:"column:subtotal"`
-		Shipping        float64 `gorm:"column:shipping"`
-		Discount        float64 `gorm:"column:discount"`
-		GrandTotal      float64 `gorm:"column:grand_total"`
-		Currency        string  `gorm:"column:currency"`
-		CouponCode      string  `gorm:"column:coupon_code"`
-		CustomerName    string  `gorm:"column:customer_name"`
-		CustomerPhone   string  `gorm:"column:customer_phone"`
-		CustomerEmail   string  `gorm:"column:customer_email"`
-		VisitorID       *string `gorm:"column:visitor_id"`
-		SessionID       *string `gorm:"column:session_id"`
-		AddressRaw      string  `gorm:"column:address_raw"`
-		CityID          int64   `gorm:"column:city_id"`
-		AddressZone     *string `gorm:"column:address_zone"`
-		AddressDistrict *string `gorm:"column:address_district"`
-	}
-	var conversationID *int64
-	if input.ConversationID > 0 {
-		conversationID = &input.ConversationID
-	}
-	addressZone := normalizedOptionalString(input.AddressZone)
-	addressDistrict := normalizedOptionalString(input.AddressDistrict)
-	visitorID := normalizedOptionalString(&input.VisitorID)
-	sessionID := normalizedOptionalString(&input.SessionID)
-
-	if err := tx.Table("orders").Create(&orderRow{
-		OrderNumber:     orderNumber,
-		ConversationID:  conversationID,
-		Status:          "new",
-		PaymentMethod:   paymentMethod,
-		PaymentStatus:   "pending",
-		Subtotal:        subtotal,
-		Shipping:        shipping,
-		Discount:        discount,
-		GrandTotal:      grandTotal,
-		Currency:        "SAR",
-		CouponCode:      strings.TrimSpace(input.CouponCode),
-		CustomerName:    input.CustomerName,
-		CustomerPhone:   input.CustomerPhone,
-		CustomerEmail:   strings.TrimSpace(input.CustomerEmail),
-		VisitorID:       visitorID,
-		SessionID:       sessionID,
-		AddressRaw:      input.AddressRaw,
-		CityID:          input.CityID,
-		AddressZone:     addressZone,
-		AddressDistrict: addressDistrict,
-	}).Error; err != nil {
-		return nil, fmt.Errorf("create order: %w", err)
-	}
-
-	var orderID int64
-	if err := tx.Table("orders").Select("id").Where("order_number = ?", orderNumber).Scan(&orderID).Error; err != nil {
-		return nil, fmt.Errorf("read order id: %w", err)
-	}
-
-	for _, item := range pricedItems {
-		payload := map[string]any{
-			"order_id":   orderID,
-			"product_id": item.ProductID,
-			"sku":        item.SKU,
-			"title":      item.Title,
-			"qty":        item.Qty,
-			"unit_price": item.UnitPrice,
-			"line_total": item.LineTotal,
-		}
-		if item.VariantID != nil {
-			payload["variant_id"] = *item.VariantID
-		}
-		if err := tx.Table("order_items").Create(&payload).Error; err != nil {
-			return nil, fmt.Errorf("create order item: %w", err)
-		}
-	}
-
-	if err := tx.Commit().Error; err != nil {
-		return nil, fmt.Errorf("commit order: %w", err)
-	}
-	committed = true
-	recordOrderAnalyticsEvent(ctx, s.db, visitorID, sessionID, orderID, orderNumber)
-
-	itemsJSON := make([]map[string]any, 0, len(pricedItems))
-	for _, item := range pricedItems {
-		itemsJSON = append(itemsJSON, map[string]any{
-			"productId": item.ProductID,
-			"title":     item.Title,
-			"sku":       item.SKU,
-			"qty":       item.Qty,
-			"unitPrice": item.UnitPrice,
-			"lineTotal": item.LineTotal,
-		})
-	}
-
-	return map[string]any{
-		"orderId":         orderID,
-		"orderNumber":     orderNumber,
-		"status":          "new",
-		"items":           itemsJSON,
-		"subtotal":        subtotal,
-		"shipping":        shipping,
-		"discount":        discount,
-		"grandTotal":      grandTotal,
-		"currency":        "SAR",
-		"conversationId":  input.ConversationID,
-		"visitorId":       visitorID,
-		"sessionId":       sessionID,
-		"paymentMethod":   paymentMethod,
-		"customerName":    input.CustomerName,
-		"customerPhone":   input.CustomerPhone,
-		"city":            city.Name,
-		"addressZone":     addressZone,
-		"addressDistrict": addressDistrict,
-	}, nil
+		result, e = publicOrder(tx, id, tracking)
+		return e
+	})
+	return result, err
 }
-
-func normalizedOptionalString(value *string) *string {
-	if value == nil {
-		return nil
+func publicOrder(db *gorm.DB, id int64, token string) (map[string]any, error) {
+	var o struct {
+		ID                                                                                    int64
+		OrderNumber, Status, PaymentMethod, Currency, CustomerName, CustomerPhone, AddressRaw string
+		CityID                                                                                int64
+		Subtotal, Shipping, Discount, GrandTotal                                              float64
+		CreatedAt                                                                             time.Time
 	}
-	trimmed := strings.TrimSpace(*value)
-	if trimmed == "" {
-		return nil
+	if e := db.Table("orders").Where("id=?", id).Take(&o).Error; e != nil {
+		return nil, e
 	}
-	return &trimmed
+	var city string
+	db.Table("cities").Select("name").Where("id=?", o.CityID).Scan(&city)
+	var deliveryEstimate string
+	db.Table("cities").Select("COALESCE(delivery_estimate,'')").Where("id=?", o.CityID).Scan(&deliveryEstimate)
+	items := []PricedItem{}
+	if e := db.Table("order_items").Where("order_id=?", id).Order("id").Find(&items).Error; e != nil {
+		return nil, e
+	}
+	return map[string]any{"id": o.ID, "orderId": o.ID, "orderNumber": o.OrderNumber, "status": o.Status, "createdAt": o.CreatedAt, "paymentMethod": o.PaymentMethod, "deliveryEstimate": deliveryEstimate, "grandTotal": o.GrandTotal, "trackingToken": token, "totals": map[string]any{"subtotal": o.Subtotal, "shipping": o.Shipping, "discount": o.Discount, "grandTotal": o.GrandTotal, "currency": o.Currency}, "customer": map[string]any{"name": o.CustomerName, "phone": o.CustomerPhone}, "address": map[string]any{"raw": o.AddressRaw, "city": city}, "items": items}, nil
 }
-
-func generateUniqueOrderNumber(ctx context.Context, db *gorm.DB) (string, error) {
-	for i := 0; i < 10; i++ {
-		orderNumber, err := randomOrderNumber()
-		if err != nil {
-			return "", err
-		}
-		var count int64
-		if err := db.WithContext(ctx).Table("orders").Where("order_number = ?", orderNumber).Count(&count).Error; err != nil {
-			return "", err
-		}
-		if count == 0 {
-			return orderNumber, nil
-		}
+func (s *OrderService) Track(ctx context.Context, id int64, token string) (map[string]any, error) {
+	var stored string
+	if token == "" {
+		return nil, fmt.Errorf("رابط التتبع غير صالح")
 	}
-	return "", fmt.Errorf("failed to generate unique order number")
-}
-
-func randomOrderNumber() (string, error) {
-	const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	code := make([]byte, 4)
-	for i := range code {
-		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
-		if err != nil {
-			return "", err
-		}
-		code[i] = alphabet[idx.Int64()]
+	if e := s.db.WithContext(ctx).Table("orders").Select("tracking_token").Where("id=?", id).Scan(&stored).Error; e != nil {
+		return nil, e
 	}
-	return "ORD-" + string(code), nil
-}
-
-func recordOrderAnalyticsEvent(ctx context.Context, db *gorm.DB, visitorID, sessionID *string, orderID int64, orderNumber string) {
-	if visitorID == nil && sessionID == nil {
-		return
+	if stored == "" || subtle.ConstantTimeCompare([]byte(stored), []byte(token)) != 1 {
+		return nil, fmt.Errorf("رابط التتبع غير صالح")
 	}
-	metadata, _ := json.Marshal(map[string]any{"orderId": orderID, "orderNumber": orderNumber})
-	row := map[string]any{
-		"visitor_id": visitorID,
-		"session_id": sessionID,
-		"event_type": "order_created",
-		"path":       "ai:create_order",
-		"metadata":   string(metadata),
-	}
-	_ = db.WithContext(ctx).Table("analytics_events").Create(&row).Error
-}
-
-func (s *OrderService) CalculateTotal(ctx context.Context, input CreateOrderInput) (map[string]any, error) {
-	if len(input.Items) == 0 {
-		return nil, fmt.Errorf("items are required")
-	}
-
-	type pricedItem struct {
-		ProductID int64
-		VariantID *int64
-		Title     string
-		SKU       string
-		Qty       int
-		UnitPrice float64
-		LineTotal float64
-	}
-	pricedItems := make([]pricedItem, 0, len(input.Items))
-	subtotal := 0.0
-
-	for _, item := range input.Items {
-		if item.ProductID <= 0 || item.Qty <= 0 {
-			return nil, fmt.Errorf("each item must include valid productId and qty")
-		}
-		var product struct {
-			ID    int64
-			Title string
-			SKU   string
-			Price float64
-		}
-		if err := s.db.WithContext(ctx).Table("products").
-			Select("id, title, sku, price").
-			Where("id = ? AND status = ?", item.ProductID, "active").
-			First(&product).Error; err != nil {
-			return nil, fmt.Errorf("invalid product: %d", item.ProductID)
-		}
-		unitPrice := product.Price
-		if item.VariantID != nil {
-			var variant struct {
-				ID            int64
-				PriceOverride *float64
-			}
-			if err := s.db.WithContext(ctx).Table("product_variants").
-				Select("id, price_override").
-				Where("id = ? AND product_id = ? AND is_active = TRUE", *item.VariantID, item.ProductID).
-				First(&variant).Error; err != nil {
-				return nil, fmt.Errorf("invalid variant for product: %d", item.ProductID)
-			}
-			if variant.PriceOverride != nil {
-				unitPrice = *variant.PriceOverride
-			}
-		}
-		lineTotal := roundMoney(unitPrice * float64(item.Qty))
-		subtotal += lineTotal
-		pricedItems = append(pricedItems, pricedItem{
-			ProductID: item.ProductID,
-			VariantID: item.VariantID,
-			Title:     product.Title,
-			SKU:       product.SKU,
-			Qty:       item.Qty,
-			UnitPrice: roundMoney(unitPrice),
-			LineTotal: lineTotal,
-		})
-	}
-
-	subtotal = roundMoney(subtotal)
-	shipping := 0.0
-	discount := 0.0
-
-	if code := strings.TrimSpace(input.CouponCode); code != "" {
-		var coupon struct {
-			Type      string
-			Value     float64
-			MinOrder  *float64
-			ExpiresAt *time.Time
-		}
-		if err := s.db.WithContext(ctx).Table("coupons").
-			Select("type, value, min_order, expires_at").
-			Where("LOWER(code) = LOWER(?) AND is_active = TRUE", code).
-			First(&coupon).Error; err == nil {
-			valid := true
-			if coupon.ExpiresAt != nil && coupon.ExpiresAt.Before(time.Now()) {
-				valid = false
-			}
-			if coupon.MinOrder != nil && subtotal < *coupon.MinOrder {
-				valid = false
-			}
-			if valid {
-				if coupon.Type == "percentage" {
-					discount = roundMoney((subtotal * coupon.Value) / 100)
-				} else {
-					discount = roundMoney(coupon.Value)
-				}
-			}
-		}
-	}
-	if discount > subtotal {
-		discount = subtotal
-	}
-	grandTotal := roundMoney(subtotal + shipping - discount)
-
-	itemsJSON := make([]map[string]any, 0, len(pricedItems))
-	for _, item := range pricedItems {
-		itemsJSON = append(itemsJSON, map[string]any{
-			"productId": item.ProductID,
-			"title":     item.Title,
-			"sku":       item.SKU,
-			"qty":       item.Qty,
-			"unitPrice": item.UnitPrice,
-			"lineTotal": item.LineTotal,
-		})
-	}
-
-	return map[string]any{
-		"items":      itemsJSON,
-		"subtotal":   subtotal,
-		"shipping":   shipping,
-		"discount":   discount,
-		"grandTotal": grandTotal,
-		"currency":   "SAR",
-		"couponCode": strings.TrimSpace(input.CouponCode),
-	}, nil
+	return publicOrder(s.db.WithContext(ctx), id, token)
 }
 
 func (s *OrderService) Lookup(ctx context.Context, orderID int64, orderNumber string, customerPhone string) (map[string]any, error) {
@@ -503,9 +198,12 @@ func (s *OrderService) Lookup(ctx context.Context, orderID int64, orderNumber st
 		return nil, fmt.Errorf("order not found")
 	}
 
+	if customerPhone == "" {
+		return nil, fmt.Errorf("رقم الجوال مطلوب")
+	}
 	if customerPhone != "" {
-		normalizedStored := strings.TrimSpace(order.CustomerPhone)
-		normalizedInput := strings.TrimSpace(customerPhone)
+		normalizedStored := NormalizePhone(order.CustomerPhone)
+		normalizedInput := NormalizePhone(customerPhone)
 		if !strings.EqualFold(normalizedStored, normalizedInput) {
 			return nil, fmt.Errorf("customer phone does not match this order")
 		}

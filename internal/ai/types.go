@@ -44,6 +44,7 @@ type Tool interface {
 }
 
 type GenerateRequest struct {
+	OnText       func(string)     `json:"-"`
 	SystemPrompt string           `json:"systemPrompt"`
 	Messages     []Message        `json:"messages"`
 	Tools        []ToolDefinition `json:"tools,omitempty"`

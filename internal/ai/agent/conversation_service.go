@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"fahd-backend/internal/ai"
+	"fahd-backend/internal/ai/services"
 
 	"gorm.io/gorm"
 )
@@ -19,45 +20,7 @@ func NewConversationService(db *gorm.DB) *ConversationService {
 }
 
 func (s *ConversationService) StartOrContinue(ctx context.Context, conversationID int64, visitorID, sessionID string) (int64, error) {
-	if conversationID > 0 {
-		var exists int64
-		if err := s.db.WithContext(ctx).Table("conversations").Where("id = ?", conversationID).Count(&exists).Error; err != nil {
-			return 0, fmt.Errorf("check conversation: %w", err)
-		}
-		if exists > 0 {
-			updates := map[string]any{}
-			if visitorID != "" {
-				updates["visitor_id"] = visitorID
-			}
-			if sessionID != "" {
-				updates["session_id"] = sessionID
-			}
-			if len(updates) > 0 {
-				_ = s.db.WithContext(ctx).Table("conversations").Where("id = ?", conversationID).Updates(updates).Error
-			}
-			return conversationID, nil
-		}
-	}
-
-	var visitor *string
-	if visitorID != "" {
-		visitor = &visitorID
-	}
-	var session *string
-	if sessionID != "" {
-		session = &sessionID
-	}
-	created := struct {
-		ID        int64   `gorm:"column:id"`
-		Status    string  `gorm:"column:status"`
-		VisitorID *string `gorm:"column:visitor_id"`
-		SessionID *string `gorm:"column:session_id"`
-	}{Status: "active", VisitorID: visitor, SessionID: session}
-	if err := s.db.WithContext(ctx).Table("conversations").Create(&created).Error; err != nil {
-		return 0, fmt.Errorf("create conversation: %w", err)
-	}
-	s.recordChatStarted(ctx, visitor, session, created.ID)
-	return created.ID, nil
+	return services.EnsureConversation(ctx, s.db, sessionID, visitorID)
 }
 
 func (s *ConversationService) recordChatStarted(ctx context.Context, visitorID, sessionID *string, conversationID int64) {
@@ -144,14 +107,15 @@ func (s *ConversationService) RecentMessages(ctx context.Context, conversationID
 	if err := s.db.WithContext(ctx).Table("messages").
 		Select("role, content, tool_calls, tool_results, metadata").
 		Where("conversation_id = ? AND content IS NOT NULL", conversationID).
-		Order("created_at ASC").
+		Order("created_at DESC, id DESC").
 		Limit(limit).
 		Find(&rows).Error; err != nil {
 		return nil, fmt.Errorf("load messages: %w", err)
 	}
 
 	messages := make([]ai.Message, 0, len(rows))
-	for _, row := range rows {
+	for i := len(rows) - 1; i >= 0; i-- {
+		row := rows[i]
 		role := ai.Role(row.Role)
 		if role == "" {
 			role = ai.RoleUser

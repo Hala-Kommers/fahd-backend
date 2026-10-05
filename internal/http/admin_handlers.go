@@ -2,7 +2,9 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fahd-backend/internal/ai/providers"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"fahd-backend/internal/ai"
+	"fahd-backend/internal/ai/services"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -751,21 +754,18 @@ func (h *Handler) AdminUpdateOrder(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid status"})
 		return
 	}
-	result := h.db.Table("orders").Where("id = ?", id).Updates(map[string]any{"status": status, "updated_at": time.Now()})
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update order"})
+	orderID, _ := strconv.ParseInt(id, 10, 64)
+	if e := services.NewOrderService(h.db).ChangeStatus(c.Request.Context(), orderID, status); e != nil {
+		c.JSON(400, gin.H{"error": e.Error()})
 		return
 	}
-	if result.RowsAffected == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
-		return
-	}
+
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": id, "status": status}})
 }
 
 func isValidOrderStatus(status string) bool {
 	switch status {
-	case "new", "confirmed", "shipped", "delivered", "returned", "cancelled":
+	case "new", "confirmed", "processing", "shipped", "delivered", "returned", "cancelled":
 		return true
 	default:
 		return false
@@ -1159,20 +1159,36 @@ func (h *Handler) AdminPatchBotConfig(c *gin.Context) {
 }
 
 func (h *Handler) AdminTestBotConnection(c *gin.Context) {
-	provider := "google"
-	var row struct{ Provider string }
-	if err := h.db.Table("bot_config").Select("provider").Order("updated_at DESC").Take(&row).Error; err == nil && row.Provider != "" {
-		provider = row.Provider
+	cfg, e := ai.LoadBotConfig(h.db, h.cfg.JWTSecret)
+	if e != nil {
+		c.JSON(400, gin.H{"error": "تعذر تحميل إعدادات البوت"})
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"ok": true, "provider": provider}})
+	p, e := providers.NewProvider(cfg)
+	if e != nil {
+		c.JSON(400, gin.H{"error": "راجع المزوّد والمفتاح"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
+	defer cancel()
+	start := time.Now()
+	response, e := p.Generate(ctx, ai.GenerateRequest{Messages: []ai.Message{{Role: ai.RoleUser, Content: "Reply OK"}}, MaxTokens: 32})
+	if e != nil || strings.TrimSpace(response.Content) == "" {
+		c.JSON(502, gin.H{"error": "فشل اختبار الاتصال الفعلي. راجع المفتاح والموديل وحصة الاستخدام."})
+		return
+	}
+	c.JSON(200, gin.H{"data": gin.H{"ok": true, "provider": p.Name(), "latencyMs": time.Since(start).Milliseconds()}})
 }
 
 func (h *Handler) AdminAnalyticsOverview(c *gin.Context) {
 	filter, args := analyticsDateFilter(c, "created_at")
 	visits := h.countDistinctAnalyticsSessions("page_view", filter, args)
-	chatSessions := h.countConversations(filter, args, true)
+	var chatSessions, ordersWithChat int64
+	cohortFilter := strings.ReplaceAll(filter, "created_at", "e.engaged_at")
+	h.db.Raw("SELECT COUNT(*) FROM chat_engagements e WHERE e.is_test=FALSE"+cohortFilter, args...).Scan(&chatSessions)
+	h.db.Raw("SELECT COUNT(*) FROM chat_engagements e WHERE e.is_test=FALSE"+cohortFilter+" AND EXISTS(SELECT 1 FROM orders o WHERE o.conversation_id=e.conversation_id AND o.is_test=FALSE AND o.status NOT IN ('cancelled','returned') AND o.created_at>=e.engaged_at AND o.created_at<e.engaged_at+INTERVAL '7 days')", args...).Scan(&ordersWithChat)
 	totalOrders := h.countOrders(filter, args, "")
-	ordersWithChat := h.countOrders(filter, args, "conversation_id IS NOT NULL")
+
 	sales := h.sumOrdersSales(filter, args, false)
 
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{
@@ -1202,7 +1218,7 @@ func (h *Handler) AdminAnalyticsOrders(c *gin.Context) {
 		Count  int64  `json:"count"`
 	}
 	var rows []statusRow
-	_ = h.db.Raw("SELECT status, COUNT(*) AS count FROM orders WHERE 1=1"+filter+" GROUP BY status", args...).Scan(&rows).Error
+	_ = h.db.Raw("SELECT status, COUNT(*) AS count FROM orders WHERE is_test=FALSE"+filter+" GROUP BY status", args...).Scan(&rows).Error
 	counts := map[string]int64{"new": 0, "confirmed": 0, "shipped": 0, "delivered": 0, "returned": 0, "cancelled": 0}
 	for _, row := range rows {
 		counts[row.Status] = row.Count
@@ -1239,7 +1255,7 @@ func (h *Handler) AdminAnalyticsSalesChart(c *gin.Context) {
 		Orders int64     `json:"orders"`
 	}
 	var rows []chartRow
-	q := fmt.Sprintf("SELECT date_trunc('%s', created_at) AS date, COALESCE(SUM(grand_total),0) AS sales, COUNT(*) AS orders FROM orders WHERE status NOT IN ('cancelled', 'returned')%s GROUP BY date ORDER BY date ASC", dateTrunc, filter)
+	q := fmt.Sprintf("SELECT date_trunc('%s', created_at) AS date, COALESCE(SUM(grand_total),0) AS sales, COUNT(*) AS orders FROM orders WHERE is_test=FALSE AND status NOT IN ('cancelled', 'returned')%s GROUP BY date ORDER BY date ASC", dateTrunc, filter)
 	if err := h.db.Raw(q, args...).Scan(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load sales chart"})
 		return
@@ -1281,7 +1297,7 @@ func (h *Handler) countConversations(filter string, args []any, requireSession b
 
 func (h *Handler) countOrders(filter string, args []any, extra string) int64 {
 	var count int64
-	q := "SELECT COUNT(*) FROM orders WHERE 1=1" + filter
+	q := "SELECT COUNT(*) FROM orders WHERE is_test=FALSE" + filter
 	if extra != "" {
 		q += " AND " + extra
 	}
@@ -1295,7 +1311,7 @@ func (h *Handler) sumOrdersSales(filter string, args []any, gross bool) float64 
 	if gross {
 		extra = " AND status != 'cancelled'"
 	}
-	_ = h.db.Raw("SELECT COALESCE(SUM(grand_total),0) FROM orders WHERE 1=1"+filter+extra, args...).Scan(&sales).Error
+	_ = h.db.Raw("SELECT COALESCE(SUM(grand_total),0) FROM orders WHERE is_test=FALSE"+filter+extra, args...).Scan(&sales).Error
 	return roundMoney(sales)
 }
 

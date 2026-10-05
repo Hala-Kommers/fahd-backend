@@ -22,11 +22,11 @@ var upgrader = websocket.Upgrader{
 }
 
 type ChatHandler struct {
-	hub           *Hub
-	sessionMgr    *session.Manager
-	db            *gorm.DB
-	msgHandler    func(sessionID string, content string, context map[string]any)
-	rateLimiter   func(sessionID string) bool
+	hub         *Hub
+	sessionMgr  *session.Manager
+	db          *gorm.DB
+	msgHandler  func(sessionID string, content string, context map[string]any)
+	rateLimiter func(sessionID string) bool
 }
 
 func NewChatHandler(hub *Hub, sessionMgr *session.Manager, db *gorm.DB, msgHandler func(string, string, map[string]any)) *ChatHandler {
@@ -97,6 +97,12 @@ func (h *ChatHandler) ServeWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			sess := h.sessionMgr.Get(sid)
+			if sess != nil && sess.ConversationID == 0 {
+				var conversation struct{ ID int64 }
+				if h.db.Table("conversations").Select("id").Where("session_id = ?", sid).First(&conversation).Error == nil {
+					h.sessionMgr.SetConversationID(sid, conversation.ID)
+				}
+			}
 			if sess == nil || sess.ConversationID == 0 {
 				client.Send(ServerMessage{Type: "history", Messages: []HistoryMessage{}})
 				return

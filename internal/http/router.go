@@ -20,7 +20,7 @@ func NewRouter(cfg config.Config, db *gorm.DB, wsHandler http.Handler) *gin.Engi
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{cfg.FrontendOrigin},
 		AllowMethods:     []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Order-Token"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
@@ -41,6 +41,10 @@ func NewRouter(cfg config.Config, db *gorm.DB, wsHandler http.Handler) *gin.Engi
 	api.POST("/analytics/events", handler.TrackAnalyticsEvent)
 	api.POST("/coupons/validate", handler.ValidateCoupon)
 	api.POST("/orders", handler.CreateOrder)
+	api.POST("/orders/quote", handler.QuoteOrder)
+	api.POST("/chat/engage", handler.EngageChat)
+	api.POST("/chat/session", handler.StartChatSession)
+	api.POST("/reviews", handler.CreateReview)
 	api.POST("/offers/session", handler.SessionOffer)
 	api.GET("/orders/:id", handler.GetOrder)
 	api.GET("/ws/chat", func(c *gin.Context) {
@@ -74,6 +78,11 @@ func NewRouter(cfg config.Config, db *gorm.DB, wsHandler http.Handler) *gin.Engi
 	admin.POST("/bot/test-connection", handler.AdminTestBotConnection)
 	admin.GET("/ai/stats", handler.AdminAIStats)
 	admin.GET("/analytics/overview", handler.AdminAnalyticsOverview)
+	admin.GET("/analytics/funnel", handler.AdminFunnel)
+	admin.GET("/analytics/performance", handler.Performance)
+	admin.PATCH("/cities/:id/delivery", handler.UpdateCityDelivery)
+	admin.PATCH("/orders/:id/test", handler.MarkTestOrder)
+	admin.PATCH("/products/:id/content", handler.UpdateProductContent)
 	admin.GET("/analytics/orders", handler.AdminAnalyticsOrders)
 	admin.GET("/analytics/sales-chart", handler.AdminAnalyticsSalesChart)
 	admin.GET("/conversations", handler.AdminListConversations)

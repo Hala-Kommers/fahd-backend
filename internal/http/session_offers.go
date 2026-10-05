@@ -9,8 +9,9 @@ import (
 
 func (h *Handler) SessionOffer(c *gin.Context) {
 	var req struct {
-		SessionID string `json:"sessionId"`
-		ProductID int64  `json:"productId"`
+		SessionID    string `json:"sessionId"`
+		SessionToken string `json:"sessionToken"`
+		ProductID    int64  `json:"productId"`
 	}
 	if c.ShouldBindJSON(&req) != nil {
 		c.JSON(400, gin.H{"error": "invalid offer request"})
@@ -18,6 +19,10 @@ func (h *Handler) SessionOffer(c *gin.Context) {
 	}
 	if _, err := uuid.Parse(req.SessionID); err != nil {
 		c.JSON(400, gin.H{"error": "invalid session"})
+		return
+	}
+	if !h.validChatSession(req.SessionID, req.SessionToken) {
+		c.JSON(401, gin.H{"error": "جلسة غير صالحة"})
 		return
 	}
 	var p struct {

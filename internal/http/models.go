@@ -10,12 +10,14 @@ type Category struct {
 }
 
 type City struct {
-	ID        int64     `gorm:"primaryKey" json:"id"`
-	Name      string    `json:"name"`
-	IsActive  bool      `json:"isActive"`
-	SortOrder int       `json:"sortOrder"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID               int64     `gorm:"primaryKey" json:"id"`
+	ShippingFee      float64   `json:"shippingFee"`
+	DeliveryEstimate *string   `json:"deliveryEstimate"`
+	Name             string    `json:"name"`
+	IsActive         bool      `json:"isActive"`
+	SortOrder        int       `json:"sortOrder"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 type Product struct {

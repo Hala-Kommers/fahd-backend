@@ -17,12 +17,12 @@ func NewProductService(db *gorm.DB) *ProductService {
 	return &ProductService{db: db}
 }
 
-func (s *ProductService) Search(ctx context.Context, query, category string, maxResults int) (map[string]any, error) {
+func (s *ProductService) Search(ctx context.Context, query, category string, maxResults int, maxPrice float64) (map[string]any, error) {
 	if maxResults <= 0 {
-		maxResults = 10
+		maxResults = 3
 	}
-	if maxResults > 20 {
-		maxResults = 20
+	if maxResults > 3 {
+		maxResults = 3
 	}
 
 	query = strings.TrimSpace(query)
@@ -31,14 +31,14 @@ func (s *ProductService) Search(ctx context.Context, query, category string, max
 		query = ""
 	}
 
-	rows, err := s.search(ctx, query, category, maxResults)
+	rows, err := s.search(ctx, query, category, maxResults, maxPrice)
 	if err != nil {
 		return nil, err
 	}
 
 	// If the model guessed an invalid category from natural language, retry without it.
 	if len(rows) == 0 && category != "" {
-		rows, err = s.search(ctx, query, "", maxResults)
+		rows, err = s.search(ctx, query, "", maxResults, maxPrice)
 		if err != nil {
 			return nil, err
 		}
@@ -47,7 +47,7 @@ func (s *ProductService) Search(ctx context.Context, query, category string, max
 	return map[string]any{"count": len(rows), "products": rows}, nil
 }
 
-func (s *ProductService) search(ctx context.Context, query, category string, maxResults int) ([]map[string]any, error) {
+func (s *ProductService) search(ctx context.Context, query, category string, maxResults int, maxPrice float64) ([]map[string]any, error) {
 	var rows []map[string]any
 	db := s.db.WithContext(ctx).Table("products p").
 		Select("p.id, p.title, p.slug, p.sku, p.price, p.compare_at, p.currency, p.stock_total, c.name AS category_name, img.url AS primary_image").
@@ -57,9 +57,12 @@ func (s *ProductService) search(ctx context.Context, query, category string, max
 		Order("p.title ASC").
 		Limit(maxResults)
 
+	if maxPrice > 0 {
+		db = db.Where("p.price<=?", maxPrice)
+	}
 	if q := strings.TrimSpace(query); q != "" {
-		like := "%" + q + "%"
-		db = db.Where("p.title ILIKE ? OR p.sku ILIKE ? OR p.description_short ILIKE ? OR p.description_long ILIKE ?", like, like, like, like)
+		like := "%" + NormalizeSearch(q) + "%"
+		db = db.Where("normalize_arabic(p.title || ' ' || p.sku || ' ' || COALESCE(p.description_short,'') || ' ' || COALESCE(p.description_long,'')) ILIKE ?", like)
 	}
 	if cat := strings.TrimSpace(category); cat != "" {
 		db = db.Where("c.slug = ? OR c.name ILIKE ?", cat, cat)
@@ -266,18 +269,18 @@ func isGenericProductQuery(query string) bool {
 		return false
 	}
 	generic := map[string]bool{
-		"product": true,
-		"products": true,
-		"item": true,
-		"items": true,
-		"catalog": true,
-		"store products": true,
-		"show products": true,
+		"product":         true,
+		"products":        true,
+		"item":            true,
+		"items":           true,
+		"catalog":         true,
+		"store products":  true,
+		"show products":   true,
 		"search products": true,
-		"all products": true,
-		"منتجات": true,
-		"المنتجات": true,
-		"كل المنتجات": true,
+		"all products":    true,
+		"منتجات":          true,
+		"المنتجات":        true,
+		"كل المنتجات":     true,
 	}
 	return generic[q]
 }
@@ -294,5 +297,36 @@ func int64FromAny(value any) (int64, bool) {
 		return int64(v), true
 	default:
 		return 0, false
+	}
+}
+
+// ApplySessionPrices keeps product tools consistent with the canonical checkout price.
+func (s *ProductService) ApplySessionPrices(ctx context.Context, data map[string]any, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	apply := func(row map[string]any) {
+		id, ok := int64FromAny(row["id"])
+		if !ok {
+			return
+		}
+		var expired struct {
+			Price   float64
+			Expired bool
+		}
+		err := s.db.WithContext(ctx).Raw(`SELECT p.compare_at AS price, TRUE AS expired FROM products p JOIN session_offers o ON o.product_id=p.id WHERE p.id=? AND o.session_id=? AND o.ends_at<=NOW() AND NOT p.has_variants AND p.compare_at>p.price`, id, sessionID).Scan(&expired).Error
+		if err == nil && expired.Expired {
+			row["price"] = expired.Price
+			row["compare_at"] = nil
+			row["pricing_tiers"] = []any{}
+			row["offer_expired"] = true
+		}
+	}
+	if rows, ok := data["products"].([]map[string]any); ok {
+		for _, row := range rows {
+			apply(row)
+		}
+	} else {
+		apply(data)
 	}
 }

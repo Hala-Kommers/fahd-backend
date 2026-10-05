@@ -25,17 +25,19 @@ func (t *SearchProductsTool) Definition() ai.ToolDefinition {
 			"properties": map[string]any{
 				"query":      map[string]any{"type": "string", "description": "Search text, product name, SKU, or description keywords."},
 				"category":   map[string]any{"type": "string", "description": "Optional category slug or name."},
-				"maxResults": map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
+				"maxPrice":   map[string]any{"type": "number", "description": "Maximum price within customer budget in SAR."},
+				"maxResults": map[string]any{"type": "integer", "minimum": 1, "maximum": 3},
 			},
 		},
 	}
 }
 
 func (t *SearchProductsTool) Execute(ctx context.Context, arguments map[string]any) (ai.ToolResult, error) {
-	data, err := t.products.Search(ctx, stringArg(arguments, "query"), stringArg(arguments, "category"), intArg(arguments, "maxResults"))
+	data, err := t.products.Search(ctx, stringArg(arguments, "query"), stringArg(arguments, "category"), intArg(arguments, "maxResults"), float64(intArg(arguments, "maxPrice")))
 	if err != nil {
 		return ai.ToolResult{}, err
 	}
+	t.products.ApplySessionPrices(ctx, data, stringArg(arguments, "sessionId"))
 	content, err := jsonContent(data)
 	return ai.ToolResult{Name: t.Definition().Name, Content: content, Data: data}, err
 }
@@ -71,6 +73,7 @@ func (t *GetProductDetailsTool) Execute(ctx context.Context, arguments map[strin
 	if err != nil {
 		return ai.ToolResult{}, err
 	}
+	t.products.ApplySessionPrices(ctx, data, stringArg(arguments, "sessionId"))
 	content, err := jsonContent(data)
 	return ai.ToolResult{Name: t.Definition().Name, Content: content, Data: data}, err
 }
@@ -102,6 +105,7 @@ func (t *CompareProductsTool) Execute(ctx context.Context, arguments map[string]
 	if err != nil {
 		return ai.ToolResult{}, err
 	}
+	t.products.ApplySessionPrices(ctx, data, stringArg(arguments, "sessionId"))
 	content, err := jsonContent(data)
 	return ai.ToolResult{Name: t.Definition().Name, Content: content, Data: data}, err
 }
@@ -138,6 +142,7 @@ func (t *ResolveVariantTool) Execute(ctx context.Context, arguments map[string]a
 	if err != nil {
 		return ai.ToolResult{}, err
 	}
+	t.products.ApplySessionPrices(ctx, data, stringArg(arguments, "sessionId"))
 	content, err := jsonContent(data)
 	return ai.ToolResult{Name: t.Definition().Name, Content: content, Data: data}, err
 }
