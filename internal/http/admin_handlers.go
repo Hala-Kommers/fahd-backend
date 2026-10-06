@@ -1099,9 +1099,11 @@ func (h *Handler) AdminPatchBotConfig(c *gin.Context) {
 		case string:
 			if v != "" {
 				encrypted, err := ai.EncryptAPIKey(v, h.cfg.JWTSecret)
-				if err == nil {
-					payload["api_key"] = encrypted
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "تعذر تشفير مفتاح API"})
+					return
 				}
+				payload["api_key"] = encrypted
 			} else {
 				payload["api_key"] = ""
 			}
@@ -1109,9 +1111,11 @@ func (h *Handler) AdminPatchBotConfig(c *gin.Context) {
 	} else if hasSnake {
 		if raw, ok := payload["api_key"].(string); ok && raw != "" {
 			encrypted, err := ai.EncryptAPIKey(raw, h.cfg.JWTSecret)
-			if err == nil {
-				payload["api_key"] = encrypted
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "تعذر تشفير مفتاح API"})
+				return
 			}
+			payload["api_key"] = encrypted
 		}
 	}
 
@@ -1166,7 +1170,7 @@ func (h *Handler) AdminTestBotConnection(c *gin.Context) {
 	}
 	p, e := providers.NewProvider(cfg)
 	if e != nil {
-		c.JSON(400, gin.H{"error": "راجع المزوّد والمفتاح"})
+		c.JSON(400, gin.H{"error": "راجع المزوّد والمفتاح", "details": e.Error()})
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
@@ -1174,7 +1178,11 @@ func (h *Handler) AdminTestBotConnection(c *gin.Context) {
 	start := time.Now()
 	response, e := p.Generate(ctx, ai.GenerateRequest{Messages: []ai.Message{{Role: ai.RoleUser, Content: "Reply OK"}}, MaxTokens: 32})
 	if e != nil || strings.TrimSpace(response.Content) == "" {
-		c.JSON(502, gin.H{"error": "فشل اختبار الاتصال الفعلي. راجع المفتاح والموديل وحصة الاستخدام."})
+		details := "لم يرجع المزوّد ردًا"
+		if e != nil {
+			details = e.Error()
+		}
+		c.JSON(502, gin.H{"error": "فشل اختبار الاتصال الفعلي. راجع المفتاح والموديل وحصة الاستخدام.", "details": details})
 		return
 	}
 	c.JSON(200, gin.H{"data": gin.H{"ok": true, "provider": p.Name(), "latencyMs": time.Since(start).Milliseconds()}})
