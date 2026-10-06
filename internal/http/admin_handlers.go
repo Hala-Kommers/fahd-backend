@@ -1165,7 +1165,11 @@ func (h *Handler) AdminPatchBotConfig(c *gin.Context) {
 func (h *Handler) AdminTestBotConnection(c *gin.Context) {
 	cfg, e := ai.LoadBotConfig(h.db, h.cfg.JWTSecret)
 	if e != nil {
-		c.JSON(400, gin.H{"error": "تعذر تحميل إعدادات البوت"})
+		c.JSON(400, gin.H{"error": "تعذر قراءة المفتاح المحفوظ. أعد حفظه ثم اختبر الاتصال."})
+		return
+	}
+	if strings.TrimSpace(cfg.APIKey) == "" {
+		c.JSON(400, gin.H{"error": "لم يتم حفظ مفتاح Google AI Studio. أدخله واضغط حفظ واختبار الاتصال."})
 		return
 	}
 	p, e := providers.NewProvider(cfg)
@@ -1182,7 +1186,8 @@ func (h *Handler) AdminTestBotConnection(c *gin.Context) {
 		if e != nil {
 			details = e.Error()
 		}
-		c.JSON(502, gin.H{"error": "فشل اختبار الاتصال الفعلي. راجع المفتاح والموديل وحصة الاستخدام.", "details": details})
+		details = strings.ReplaceAll(details, cfg.APIKey, "[redacted]")
+		c.JSON(502, gin.H{"error": "فشل اتصال Google: " + details})
 		return
 	}
 	c.JSON(200, gin.H{"data": gin.H{"ok": true, "provider": p.Name(), "latencyMs": time.Since(start).Milliseconds()}})
