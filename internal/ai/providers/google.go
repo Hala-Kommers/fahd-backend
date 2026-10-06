@@ -164,6 +164,7 @@ type googlePart struct {
 	Text             string                  `json:"text,omitempty"`
 	FunctionCall     *googleFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *googleFunctionResponse `json:"functionResponse,omitempty"`
+	ThoughtSignature string                  `json:"thoughtSignature,omitempty"`
 }
 
 type googleFunctionCall struct {
@@ -209,9 +210,10 @@ func (r googleGenerateResponse) ToolCalls() []ai.ToolCall {
 			continue
 		}
 		calls = append(calls, ai.ToolCall{
-			ID:        fmt.Sprintf("google_tool_call_%d", i+1),
-			Name:      part.FunctionCall.Name,
-			Arguments: part.FunctionCall.Args,
+			ID:               fmt.Sprintf("google_tool_call_%d", i+1),
+			Name:             part.FunctionCall.Name,
+			Arguments:        part.FunctionCall.Args,
+			ThoughtSignature: part.ThoughtSignature,
 		})
 	}
 	return calls
@@ -241,7 +243,9 @@ func googleContents(messages []ai.Message) []googleContent {
 				responseData = map[string]any{"result": message.Content}
 			}
 			contents = append(contents, googleContent{
-				Role: "function",
+				// Gemini represents a function response as a user content part.
+				// The OpenAI-style "function" role is rejected by the Gemini API.
+				Role: "user",
 				Parts: []googlePart{{
 					FunctionResponse: &googleFunctionResponse{
 						Name:     name,
@@ -255,7 +259,8 @@ func googleContents(messages []ai.Message) []googleContent {
 				parts := make([]googlePart, 0, len(message.ToolCalls))
 				for _, tc := range message.ToolCalls {
 					parts = append(parts, googlePart{
-						FunctionCall: &googleFunctionCall{Name: tc.Name, Args: tc.Arguments},
+						FunctionCall:     &googleFunctionCall{Name: tc.Name, Args: tc.Arguments},
+						ThoughtSignature: tc.ThoughtSignature,
 					})
 				}
 				contents = append(contents, googleContent{Role: "model", Parts: parts})
@@ -267,7 +272,7 @@ func googleContents(messages []ai.Message) []googleContent {
 							responseData = map[string]any{"result": r.Content}
 						}
 						contents = append(contents, googleContent{
-							Role: "function",
+							Role: "user",
 							Parts: []googlePart{{
 								FunctionResponse: &googleFunctionResponse{
 									Name:     r.Name,

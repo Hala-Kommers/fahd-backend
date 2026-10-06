@@ -20,9 +20,10 @@ type Message struct {
 }
 
 type ToolCall struct {
-	ID        string         `json:"id"`
-	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments"`
+	ID               string         `json:"id"`
+	Name             string         `json:"name"`
+	Arguments        map[string]any `json:"arguments"`
+	ThoughtSignature string         `json:"thoughtSignature,omitempty"`
 }
 
 type ToolResult struct {
