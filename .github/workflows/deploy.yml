@@ -10,16 +10,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Add deploy key
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
-
-      - name: Trust server host key
+      - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Deploy stack
         run: |
-          ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "cd '${{ secrets.DEPLOY_PATH }}' && git pull origin main && docker compose run --rm migrate up && docker compose up -d --build api"
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "cd '${{ secrets.DEPLOY_PATH }}' && git pull origin main && docker compose run --rm migrate up && docker compose up -d --build api"
