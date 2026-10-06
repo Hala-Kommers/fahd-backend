@@ -19,3 +19,13 @@ func TestStructuredActions(t *testing.T) {
 		t.Fatal(text, actions)
 	}
 }
+
+func TestContextualQuickReply(t *testing.T) {
+	text, actions := parseActions("الشحن حسب المدينة [ACTION:quick_reply:اختر المدينة|أريد معرفة الشحن للرياض] [ACTION:quick_reply:ناقص]")
+	if text != "الشحن حسب المدينة" || len(actions) != 1 || actions[0].Type != "quick_reply" {
+		t.Fatal(text, actions)
+	}
+	if actions[0].Payload.(map[string]any)["message"] != "أريد معرفة الشحن للرياض" {
+		t.Fatal(actions)
+	}
+}

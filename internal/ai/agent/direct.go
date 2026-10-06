@@ -71,6 +71,14 @@ func (s *Service) directResponse(ctx context.Context, r MessageRequest, id int64
 		}
 		actions = []any{}
 	}
+	if kind != "checkout" {
+		actions = append(actions, AgentAction{Type: "quick_reply", Payload: map[string]any{"label": "التوصيل والشحن", "message": "كم تكلفة الشحن وموعد التوصيل لهذا المنتج؟"}})
+		if kind == "stock" {
+			actions = append(actions, AgentAction{Type: "quick_reply", Payload: map[string]any{"label": "أظهر العروض", "message": "العروض"}})
+		} else {
+			actions = append(actions, AgentAction{Type: "quick_reply", Payload: map[string]any{"label": "مميزات المنتج", "message": "وش أهم مميزات هذا المنتج ولمن يناسب؟"}})
+		}
+	}
 	encoded, _ := json.Marshal(actions)
 	_ = s.conversations.SaveMessage(ctx, id, ai.RoleAssistant, reply, map[string]any{"actions": json.RawMessage(encoded)})
 	if r.OnText != nil {
