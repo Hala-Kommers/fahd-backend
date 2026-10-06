@@ -34,6 +34,7 @@ func NewRouter(cfg config.Config, db *gorm.DB, wsHandler http.Handler) *gin.Engi
 	})
 
 	api := router.Group("/api")
+	api.GET("/marketing/pixel", handler.GetMarketingSettings)
 	api.GET("/products", handler.ListProducts)
 	api.GET("/products/:id", handler.GetProduct)
 	api.GET("/categories", handler.ListCategories)
@@ -73,6 +74,8 @@ func NewRouter(cfg config.Config, db *gorm.DB, wsHandler http.Handler) *gin.Engi
 	admin.POST("/coupons", handler.AdminCreateCoupon)
 	admin.PATCH("/coupons/:code", handler.AdminUpdateCoupon)
 	admin.DELETE("/coupons/:code", handler.AdminDeleteCoupon)
+	admin.GET("/marketing/pixel", handler.GetMarketingSettings)
+	admin.PUT("/marketing/pixel", handler.SaveMarketingSettings)
 	admin.GET("/bot/config", handler.AdminGetBotConfig)
 	admin.PATCH("/bot/config", handler.AdminPatchBotConfig)
 	admin.POST("/bot/test-connection", handler.AdminTestBotConnection)

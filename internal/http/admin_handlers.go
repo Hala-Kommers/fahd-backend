@@ -1490,6 +1490,7 @@ func (h *Handler) AdminListMessages(c *gin.Context) {
 
 func (h *Handler) AdminListConversations(c *gin.Context) {
 	type convoRow struct {
+		OrderCount            int64     `json:"orderCount"`
 		ID                    int64     `json:"id"`
 		Status                string    `json:"status"`
 		CustomerName          *string   `json:"customerName"`
@@ -1524,12 +1525,26 @@ func (h *Handler) AdminListConversations(c *gin.Context) {
 		}
 	}
 
-	countQ := `SELECT COUNT(*) FROM conversations c`
-	countArgs := []any{}
+	where := " WHERE 1=1"
+	filterArgs := []any{}
 	if status := strings.TrimSpace(c.Query("status")); status != "" {
-		countQ += " WHERE c.status = ?"
-		countArgs = append(countArgs, status)
+		where += " AND c.status = ?"
+		filterArgs = append(filterArgs, status)
 	}
+	switch c.Query("view") {
+	case "live":
+		where += " AND c.status <> 'closed' AND c.updated_at >= NOW() - INTERVAL '15 minutes'"
+	case "old":
+		where += " AND (c.status = 'closed' OR c.updated_at < NOW() - INTERVAL '15 minutes')"
+	case "orders":
+		where += " AND EXISTS(SELECT 1 FROM orders o WHERE o.conversation_id=c.id)"
+	}
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		where += " AND (COALESCE(c.customer_name,'') ILIKE ? OR COALESCE(c.customer_phone,'') ILIKE ? OR CAST(c.id AS TEXT)=? OR EXISTS(SELECT 1 FROM orders o WHERE o.conversation_id=c.id AND o.order_number ILIKE ?))"
+		filterArgs = append(filterArgs, "%"+search+"%", "%"+search+"%", search, "%"+search+"%")
+	}
+	countQ := "SELECT COUNT(*) FROM conversations c" + where
+	countArgs := filterArgs
 	var total int64
 	if err := h.db.Raw(countQ, countArgs...).Scan(&total).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to count conversations"})
@@ -1538,7 +1553,7 @@ func (h *Handler) AdminListConversations(c *gin.Context) {
 
 	var rows []convoRow
 	q := `
-		SELECT c.id, c.status, c.customer_name, c.customer_phone, c.visitor_id, c.session_id,
+		SELECT (SELECT COUNT(*) FROM orders o WHERE o.conversation_id=c.id) AS order_count, c.id, c.status, c.customer_name, c.customer_phone, c.visitor_id, c.session_id,
 		       c.created_at, c.updated_at,
 		       COALESCE(mc.cnt,0) AS message_count,
 		       COALESCE(lm.content,'') AS last_message,
@@ -1557,12 +1572,8 @@ func (h *Handler) AdminListConversations(c *gin.Context) {
 			FROM messages GROUP BY conversation_id
 		) tu ON tu.conversation_id = c.id
 	`
-	args := []any{}
-	if status := strings.TrimSpace(c.Query("status")); status != "" {
-		q += " WHERE c.status = ?"
-		args = append(args, status)
-	}
-	q += " ORDER BY c.updated_at DESC"
+	args := append([]any{}, filterArgs...)
+	q += where + " ORDER BY c.updated_at DESC, c.id DESC"
 	offset := (page - 1) * limit
 	q += " OFFSET ? LIMIT ?"
 	args = append(args, offset, limit)
@@ -1627,7 +1638,17 @@ func (h *Handler) AdminGetConversation(c *gin.Context) {
 		return
 	}
 	convo.Messages = messages
-	c.JSON(http.StatusOK, gin.H{"data": convo})
+	var orders []struct {
+		ID          int64   `json:"id"`
+		OrderNumber string  `json:"orderNumber"`
+		Status      string  `json:"status"`
+		GrandTotal  float64 `json:"grandTotal"`
+	}
+	if err := h.db.Table("orders").Select("id, order_number, status, grand_total").Where("conversation_id = ?", id).Order("created_at DESC").Find(&orders).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load conversation orders"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": convo, "orders": orders})
 }
 
 func (h *Handler) AdminCloseConversation(c *gin.Context) {
