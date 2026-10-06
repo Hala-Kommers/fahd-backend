@@ -35,6 +35,9 @@ func LoadBotConfig(db *gorm.DB, jwtSecret string) (BotConfig, error) {
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	if cfg.APIKey != "" {
 		decrypted, err := DecryptAPIKey(cfg.APIKey, jwtSecret)
+		if err != nil {
+			return BotConfig{}, fmt.Errorf("تعذر فك تشفير المفتاح المحفوظ؛ أعد حفظ مفتاح Google AI Studio")
+		}
 		if err == nil {
 			cfg.APIKey = strings.TrimSpace(decrypted)
 			cfg.HasAPIKey = cfg.APIKey != ""
