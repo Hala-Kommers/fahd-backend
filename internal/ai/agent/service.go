@@ -67,6 +67,13 @@ func parseActions(text string) (string, []AgentAction) {
 		}
 		actionType := parts[1]
 		switch actionType {
+		case "quick_reply":
+			if len(parts) >= 3 {
+				choice := strings.SplitN(parts[2], "|", 2)
+				if len(choice) == 2 && len(actions) < 6 && strings.TrimSpace(choice[0]) != "" && strings.TrimSpace(choice[1]) != "" && len([]rune(choice[0])) <= 35 && len([]rune(choice[1])) <= 200 {
+					actions = append(actions, AgentAction{Type: "quick_reply", Payload: map[string]any{"label": strings.TrimSpace(choice[0]), "message": strings.TrimSpace(choice[1])}})
+				}
+			}
 		case "show_offers", "checkout":
 			actions = append(actions, AgentAction{Type: actionType})
 		case "address_form":
