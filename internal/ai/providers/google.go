@@ -227,60 +227,64 @@ func googleSystemInstruction(prompt string) googleContent {
 }
 
 func googleContents(messages []ai.Message) []googleContent {
+	// A persisted history can be trimmed in the middle of a tool cycle. Gemini
+	// rejects a function-call turn unless it follows a user/function-response
+	// turn, so begin replay at the first complete customer turn.
+	for len(messages) > 0 && messages[0].Role != ai.RoleUser {
+		messages = messages[1:]
+	}
+
 	contents := make([]googleContent, 0, len(messages)*3)
-	for _, message := range messages {
+	for i := 0; i < len(messages); i++ {
+		message := messages[i]
 		if message.Content == "" && len(message.ToolCalls) == 0 || message.Role == ai.RoleSystem {
 			continue
 		}
 		switch message.Role {
 		case ai.RoleTool:
-			name := "tool_result"
-			if rawName, ok := message.Metadata["name"].(string); ok && rawName != "" {
-				name = rawName
-			}
-			var responseData map[string]any
-			if err := json.Unmarshal([]byte(message.Content), &responseData); err != nil || responseData == nil {
-				responseData = map[string]any{"result": message.Content}
-			}
-			contents = append(contents, googleContent{
-				// Gemini represents a function response as a user content part.
-				// The OpenAI-style "function" role is rejected by the Gemini API.
-				Role: "user",
-				Parts: []googlePart{{
-					FunctionResponse: &googleFunctionResponse{
-						Name:     name,
-						Response: responseData,
-					},
-				}},
-			})
+			// Orphan tool results cannot be replayed safely. Complete tool cycles are
+			// consumed by the assistant branch below.
+			continue
 		case ai.RoleAssistant:
-			// Compact format: message may bundle tool_calls + tool_results + final text
+			// A message may either be an in-flight tool turn followed by RoleTool
+			// messages, or a persisted compact turn that bundles calls, results and
+			// final text. Rebuild both forms as one valid Gemini sequence.
 			if len(message.ToolCalls) > 0 {
-				parts := make([]googlePart, 0, len(message.ToolCalls))
+				callParts := make([]googlePart, 0, len(message.ToolCalls))
 				for _, tc := range message.ToolCalls {
-					parts = append(parts, googlePart{
+					callParts = append(callParts, googlePart{
 						FunctionCall:     &googleFunctionCall{Name: tc.Name, Args: tc.Arguments},
 						ThoughtSignature: tc.ThoughtSignature,
 					})
 				}
-				contents = append(contents, googleContent{Role: "model", Parts: parts})
 
+				responseParts := []googlePart{}
 				if results, ok := message.Metadata["tool_results"].([]ai.ToolResult); ok && len(results) > 0 {
 					for _, r := range results {
-						var responseData map[string]any
-						if err := json.Unmarshal([]byte(r.Content), &responseData); err != nil || responseData == nil {
-							responseData = map[string]any{"result": r.Content}
-						}
-						contents = append(contents, googleContent{
-							Role: "user",
-							Parts: []googlePart{{
-								FunctionResponse: &googleFunctionResponse{
-									Name:     r.Name,
-									Response: responseData,
-								},
-							}},
-						})
+						responseParts = append(responseParts, googleFunctionResponsePart(r.Name, r.Content))
 					}
+				}
+
+				// During the current request, tool results are stored as adjacent tool
+				// messages. Gemini requires parallel results in a single user turn.
+				for i+1 < len(messages) && messages[i+1].Role == ai.RoleTool {
+					i++
+					result := messages[i]
+					name := "tool_result"
+					if rawName, ok := result.Metadata["name"].(string); ok && rawName != "" {
+						name = rawName
+					}
+					responseParts = append(responseParts, googleFunctionResponsePart(name, result.Content))
+				}
+
+				// Never replay a partial call without its response. The final assistant
+				// text remains useful context even when an old tool cycle is incomplete.
+				precedesCall := len(contents) > 0 && contents[len(contents)-1].Role == "user"
+				if precedesCall && len(responseParts) == len(callParts) {
+					contents = append(contents,
+						googleContent{Role: "model", Parts: callParts},
+						googleContent{Role: "user", Parts: responseParts},
+					)
 				}
 			}
 			// Emit text part (even without tool_calls for plain assistant replies)
@@ -298,6 +302,14 @@ func googleContents(messages []ai.Message) []googleContent {
 		}
 	}
 	return contents
+}
+
+func googleFunctionResponsePart(name, content string) googlePart {
+	var responseData map[string]any
+	if err := json.Unmarshal([]byte(content), &responseData); err != nil || responseData == nil {
+		responseData = map[string]any{"result": content}
+	}
+	return googlePart{FunctionResponse: &googleFunctionResponse{Name: name, Response: responseData}}
 }
 
 func googleTools(definitions []ai.ToolDefinition) []googleTool {
