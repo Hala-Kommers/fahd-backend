@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -39,6 +40,8 @@ type adminProductUpsertRequest struct {
 	} `json:"inventory"`
 	IsFeatured        bool                  `json:"isFeatured"`
 	HasVariants       bool                  `json:"hasVariants"`
+	FreeShipping      bool                  `json:"freeShipping"`
+	BundleOnly        bool                  `json:"bundleOnly"`
 	VariantOptions    []any                 `json:"variantOptions"`
 	Specs             []map[string]any      `json:"specs"`
 	FAQ               []map[string]any      `json:"faq"`
@@ -49,10 +52,11 @@ type adminProductUpsertRequest struct {
 }
 
 type adminPricingTierReq struct {
-	Qty           int     `json:"qty"`
-	Label         *string `json:"label"`
-	OriginalPrice float64 `json:"originalPrice"`
-	FinalPrice    float64 `json:"finalPrice"`
+	Qty           int      `json:"qty"`
+	Label         *string  `json:"label"`
+	OriginalPrice float64  `json:"originalPrice"`
+	FinalPrice    float64  `json:"finalPrice"`
+	BundlePrice   *float64 `json:"bundlePrice"`
 }
 
 type adminImageReq struct {
@@ -213,6 +217,8 @@ func (h *Handler) AdminGetProduct(c *gin.Context) {
 			"lowStockThreshold": product.LowStockThreshold,
 		},
 		"hasVariants":       product.HasVariants,
+		"freeShipping":      product.FreeShipping,
+		"bundleOnly":        product.BundleOnly,
 		"variants":          variantPayload,
 		"usageInstructions": product.UsageInstructions,
 		"salesCount":        product.SalesCount,
@@ -360,9 +366,17 @@ func validateAdminProductUpsert(req adminProductUpsertRequest) error {
 	if req.Inventory.LowStockThreshold < 0 {
 		return fmt.Errorf("inventory.lowStockThreshold cannot be negative")
 	}
+	if req.BundleOnly && (req.HasVariants || len(req.PricingTiers) == 0) {
+		return fmt.Errorf("الباقات المحددة تحتاج عروضًا بدون متغيرات")
+	}
+	seenQuantities := map[int]bool{}
 	for _, item := range req.PricingTiers {
-		if item.Qty <= 0 {
-			return fmt.Errorf("pricingTiers.qty must be greater than 0")
+		if item.Qty <= 0 || item.Qty > 1000 || seenQuantities[item.Qty] {
+			return fmt.Errorf("كمية العرض غير صالحة أو مكررة")
+		}
+		seenQuantities[item.Qty] = true
+		if item.OriginalPrice < 0 || (item.BundlePrice == nil && item.FinalPrice <= 0) || (item.BundlePrice != nil && *item.BundlePrice <= 0) || (req.BundleOnly && item.BundlePrice == nil) {
+			return fmt.Errorf("حدد سعرًا موجبًا لكل عرض؛ الباقات المحددة تحتاج إجمالي الباقة")
 		}
 	}
 	for _, image := range req.Images {
@@ -416,6 +430,8 @@ func applyProductBaseMap(base *map[string]any, req adminProductUpsertRequest) {
 		"low_stock_threshold": req.Inventory.LowStockThreshold,
 		"is_featured":         req.IsFeatured,
 		"has_variants":        req.HasVariants,
+		"free_shipping":       req.FreeShipping,
+		"bundle_only":         req.BundleOnly,
 		"variant_options":     variantOptionsJSON,
 		"specs":               specsJSON,
 		"faq":                 faqJSON,
@@ -428,12 +444,17 @@ func upsertProductChildren(tx *gorm.DB, productID int64, req adminProductUpsertR
 		return fmt.Errorf("failed to replace pricing tiers")
 	}
 	for _, tier := range req.PricingTiers {
+		finalPrice := tier.FinalPrice
+		if tier.BundlePrice != nil {
+			finalPrice = math.Round(*tier.BundlePrice/float64(tier.Qty)*100) / 100
+		}
 		row := map[string]any{
 			"product_id":     productID,
 			"qty":            tier.Qty,
 			"label":          tier.Label,
 			"original_price": tier.OriginalPrice,
-			"final_price":    tier.FinalPrice,
+			"final_price":    finalPrice,
+			"bundle_price":   tier.BundlePrice,
 		}
 		if err := tx.Table("pricing_tiers").Create(&row).Error; err != nil {
 			return fmt.Errorf("failed to save pricing tiers")

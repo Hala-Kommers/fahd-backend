@@ -26,21 +26,26 @@ type Handler struct {
 }
 
 type productListItem struct {
-	ID           int64    `json:"id"`
-	Title        string   `json:"title"`
-	Slug         string   `json:"slug"`
-	SKU          string   `json:"sku"`
-	Status       string   `json:"status"`
-	CategoryID   *int64   `json:"categoryId"`
-	CategoryName *string  `json:"categoryName"`
-	PrimaryImage *string  `json:"primaryImage"`
-	Price        float64  `json:"price"`
-	CompareAt    *float64 `json:"compareAt"`
-	Currency     string   `json:"currency"`
-	StockTotal   int      `json:"stockTotal"`
-	IsFeatured   bool     `json:"isFeatured"`
-	SalesCount   int      `json:"salesCount"`
-	Rating       float64  `json:"rating"`
+	ID                int64    `json:"id"`
+	Title             string   `json:"title"`
+	Slug              string   `json:"slug"`
+	SKU               string   `json:"sku"`
+	Status            string   `json:"status"`
+	CategoryID        *int64   `json:"categoryId"`
+	CategoryName      *string  `json:"categoryName"`
+	PrimaryImage      *string  `json:"primaryImage"`
+	Price             float64  `json:"price"`
+	CompareAt         *float64 `json:"compareAt"`
+	Currency          string   `json:"currency"`
+	StockTotal        int      `json:"stockTotal"`
+	IsFeatured        bool     `json:"isFeatured"`
+	FreeShipping      bool     `json:"freeShipping"`
+	BundleOnly        bool     `json:"bundleOnly"`
+	StartingPrice     *float64 `json:"startingPrice,omitempty"`
+	StartingQty       *int     `json:"startingQty,omitempty"`
+	StartingCompareAt *float64 `json:"startingCompareAt,omitempty"`
+	SalesCount        int      `json:"salesCount"`
+	Rating            float64  `json:"rating"`
 }
 
 func NewHandler(db *gorm.DB, cfg config.Config, wsHandler http.Handler) *Handler {
@@ -50,9 +55,10 @@ func NewHandler(db *gorm.DB, cfg config.Config, wsHandler http.Handler) *Handler
 func (h *Handler) ListProducts(c *gin.Context) {
 	var products []productListItem
 	query := h.db.Model(&Product{}).
-		Select("products.id, products.title, products.slug, products.sku, products.status, products.category_id, categories.name AS category_name, img.url AS primary_image, products.price, products.compare_at, products.currency, products.stock_total, products.is_featured, products.sales_count, products.rating").
+		Select("products.id, products.title, products.slug, products.sku, products.status, products.category_id, categories.name AS category_name, img.url AS primary_image, products.price, products.compare_at, products.currency, products.stock_total, products.is_featured, products.free_shipping, products.bundle_only, products.sales_count, products.rating, offer.starting_price, offer.starting_qty, offer.starting_compare_at").
 		Joins("LEFT JOIN categories ON categories.id = products.category_id").
 		Joins("LEFT JOIN LATERAL (SELECT url FROM product_images i WHERE i.product_id = products.id ORDER BY i.is_primary DESC, i.sort_order ASC, i.id ASC LIMIT 1) img ON TRUE").
+		Joins("LEFT JOIN LATERAL (SELECT qty AS starting_qty, bundle_price AS starting_price, original_price * qty AS starting_compare_at FROM pricing_tiers t WHERE t.product_id = products.id AND t.bundle_price IS NOT NULL ORDER BY qty ASC LIMIT 1) offer ON TRUE").
 		Where("status = ?", "active")
 
 	page := 1
@@ -83,21 +89,21 @@ func (h *Handler) ListProducts(c *gin.Context) {
 	}
 	if minPrice := strings.TrimSpace(c.Query("minPrice")); minPrice != "" {
 		if value, err := strconv.ParseFloat(minPrice, 64); err == nil {
-			query = query.Where("price >= ?", value)
+			query = query.Where("CASE WHEN products.bundle_only THEN COALESCE(offer.starting_price, products.price) ELSE products.price END >= ?", value)
 		}
 	}
 	if maxPrice := strings.TrimSpace(c.Query("maxPrice")); maxPrice != "" {
 		if value, err := strconv.ParseFloat(maxPrice, 64); err == nil {
-			query = query.Where("price <= ?", value)
+			query = query.Where("CASE WHEN products.bundle_only THEN COALESCE(offer.starting_price, products.price) ELSE products.price END <= ?", value)
 		}
 	}
 
 	sort := c.DefaultQuery("sort", "updated_desc")
 	switch sort {
 	case "price_asc":
-		query = query.Order("price ASC")
+		query = query.Order("CASE WHEN products.bundle_only THEN COALESCE(offer.starting_price, products.price) ELSE products.price END ASC")
 	case "price_desc":
-		query = query.Order("price DESC")
+		query = query.Order("CASE WHEN products.bundle_only THEN COALESCE(offer.starting_price, products.price) ELSE products.price END DESC")
 	case "title_asc":
 		query = query.Order("title ASC")
 	default:
@@ -205,6 +211,8 @@ func (h *Handler) GetProduct(c *gin.Context) {
 		"lowStockThreshold": product.LowStockThreshold,
 		"isFeatured":        product.IsFeatured,
 		"hasVariants":       product.HasVariants,
+		"freeShipping":      product.FreeShipping,
+		"bundleOnly":        product.BundleOnly,
 		"usageInstructions": product.UsageInstructions,
 		"salesCount":        product.SalesCount,
 		"rating":            product.Rating,

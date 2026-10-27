@@ -50,7 +50,7 @@ func (s *ProductService) Search(ctx context.Context, query, category string, max
 func (s *ProductService) search(ctx context.Context, query, category string, maxResults int, maxPrice float64) ([]map[string]any, error) {
 	var rows []map[string]any
 	db := s.db.WithContext(ctx).Table("products p").
-		Select("p.id, p.title, p.slug, p.sku, p.price, p.compare_at, p.currency, p.stock_total, c.name AS category_name, img.url AS primary_image").
+		Select("p.id, p.title, p.slug, p.sku, p.price, p.compare_at, p.currency, p.free_shipping, p.bundle_only, p.stock_total, c.name AS category_name, img.url AS primary_image").
 		Joins("LEFT JOIN categories c ON c.id = p.category_id").
 		Joins("LEFT JOIN LATERAL (SELECT url FROM product_images i WHERE i.product_id = p.id ORDER BY i.is_primary DESC, i.sort_order ASC, i.id ASC LIMIT 1) img ON TRUE").
 		Where("p.status = ?", "active").
@@ -109,7 +109,7 @@ func (s *ProductService) Compare(ctx context.Context, productIDs []int64) (map[s
 
 	var rows []map[string]any
 	if err := s.db.WithContext(ctx).Table("products p").
-		Select("p.id, p.title, p.sku, p.price, p.compare_at, p.currency, p.stock_total, p.rating, c.name AS category_name").
+		Select("p.id, p.title, p.sku, p.price, p.compare_at, p.currency, p.free_shipping, p.bundle_only, p.stock_total, p.rating, c.name AS category_name").
 		Joins("LEFT JOIN categories c ON c.id = p.category_id").
 		Where("p.id IN ? AND p.status = ?", ids, "active").
 		Find(&rows).Error; err != nil {
@@ -120,7 +120,7 @@ func (s *ProductService) Compare(ctx context.Context, productIDs []int64) (map[s
 		if id, ok := int64FromAny(row["id"]); ok {
 			var tiers []map[string]any
 			_ = s.db.WithContext(ctx).Table("pricing_tiers").
-				Select("qty, label, original_price, final_price").
+				Select("qty, label, original_price, final_price, bundle_price").
 				Where("product_id = ?", id).
 				Order("qty ASC").Find(&tiers).Error
 			row["pricing_tiers"] = tiers

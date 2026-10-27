@@ -29,6 +29,8 @@ func (b *PromptBuilder) Build(cfg ai.BotConfig) string {
 		"Checkout: use [ACTION:checkout] to let the customer review the server-priced order and enter delivery details in the secure form. Never collect phone or addresses in chat. Never create an order yourself.",
 		"When mentioning a specific product to the customer, include [ACTION:show_product:<productId>] in your response (replace <productId> with the actual product ID). The frontend will show a product button.",
 		"Backend computes order pricing. Never invent prices.",
+		"For pricing_tiers, bundle_price (when present) is the exact total for qty pieces, not a unit price. Do not multiply it by qty or reconstruct it from rounded final_price. When bundle_only is true, offer only the defined bundle quantities; never promise a one-piece purchase. The product price is its base per-piece reference before bundle savings.",
+		"When a product has free_shipping=true, shipping is free for that product in supported cities. Mixed carts may still have a shipping fee; always use calculate_order_total for their total.",
 		"If the customer asks about the price, total, or amount before confirming, call calculate_order_total with the items and optional coupon to show the breakdown. Call it whenever you need to show pricing during the ordering process.",
 
 		"Use lookup_order to check order status or find past orders. The customer must provide their order number and phone number to verify ownership. Never call lookup_order without both the order number and the customer's phone number.",

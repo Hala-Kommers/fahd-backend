@@ -38,6 +38,8 @@ type Product struct {
 	LowStockThreshold int       `json:"lowStockThreshold"`
 	IsFeatured        bool      `json:"isFeatured"`
 	HasVariants       bool      `json:"hasVariants"`
+	FreeShipping      bool      `json:"freeShipping"`
+	BundleOnly        bool      `json:"bundleOnly"`
 	VariantOptions    []byte    `json:"variantOptions"`
 	Specs             []byte    `json:"specs"`
 	FAQ               []byte    `json:"faq"`
@@ -77,6 +79,7 @@ type PricingTier struct {
 	Label         *string   `json:"label"`
 	OriginalPrice float64   `json:"originalPrice"`
 	FinalPrice    float64   `json:"finalPrice"`
+	BundlePrice   *float64  `json:"bundlePrice,omitempty"`
 	CreatedAt     time.Time `json:"createdAt"`
 }
 

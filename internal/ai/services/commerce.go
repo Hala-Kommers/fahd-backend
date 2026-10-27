@@ -90,6 +90,7 @@ func (s *OrderService) price(ctx context.Context, db *gorm.DB, in CreateOrderInp
 		return variantNumber(items[i]) < variantNumber(items[j])
 	})
 	seen := map[string]bool{}
+	allFreeShipping := true
 	for _, it := range items {
 		if it.ProductID <= 0 || it.Qty < 1 || it.Qty > 1000 {
 			return q, fmt.Errorf("الكمية غير صالحة")
@@ -106,6 +107,7 @@ func (s *OrderService) price(ctx context.Context, db *gorm.DB, in CreateOrderInp
 			CompareAt                 *float64
 			StockTotal                int
 			HasVariants               bool
+			FreeShipping, BundleOnly  bool
 		}
 		query := db.WithContext(ctx).Table("products").Where("id=? AND status='active'", it.ProductID)
 		if lock {
@@ -115,6 +117,8 @@ func (s *OrderService) price(ctx context.Context, db *gorm.DB, in CreateOrderInp
 			return q, fmt.Errorf("المنتج غير متاح")
 		}
 		unit := p.Price
+		allFreeShipping = allFreeShipping && p.FreeShipping
+		var bundleTotal *float64
 		stock := p.StockTotal
 		override := false
 		if p.HasVariants && it.VariantID == nil {
@@ -146,13 +150,31 @@ func (s *OrderService) price(ctx context.Context, db *gorm.DB, in CreateOrderInp
 			return q, fmt.Errorf("الكمية المطلوبة من %s غير متاحة؛ المتوفر %d", p.Title, stock)
 		}
 		if !override {
-			var tier struct{ FinalPrice float64 }
-			r := db.Table("pricing_tiers").Select("final_price").Where("product_id=? AND qty<=?", p.ID, it.Qty).Order("qty DESC").Limit(1).Find(&tier)
+			var tier struct {
+				Qty         int
+				FinalPrice  float64
+				BundlePrice *float64
+			}
+			tiers := db.Table("pricing_tiers").Select("qty, final_price, bundle_price").Where("product_id=? AND qty<=?", p.ID, it.Qty)
+			if p.BundleOnly {
+				tiers = tiers.Where("qty=? AND bundle_price IS NOT NULL", it.Qty)
+			} else {
+				// Exact bundles must not silently become a per-unit discount for larger quantities.
+				tiers = tiers.Where("bundle_price IS NULL OR qty=?", it.Qty)
+			}
+			r := tiers.Order("qty DESC").Limit(1).Find(&tier)
 			if r.Error != nil {
 				return q, r.Error
 			}
+			if p.BundleOnly && r.RowsAffected == 0 {
+				return q, fmt.Errorf("اختر إحدى باقات %s المتاحة", p.Title)
+			}
 			if r.RowsAffected > 0 {
 				unit = tier.FinalPrice
+				if tier.BundlePrice != nil {
+					bundleTotal = tier.BundlePrice
+					unit = *tier.BundlePrice / float64(it.Qty)
+				}
 			}
 		}
 		if !p.HasVariants && p.CompareAt != nil && *p.CompareAt > p.Price && in.SessionID != "" {
@@ -164,6 +186,7 @@ func (s *OrderService) price(ctx context.Context, db *gorm.DB, in CreateOrderInp
 			if r.RowsAffected > 0 {
 				if !time.Now().Before(offer.EndsAt) {
 					unit = *p.CompareAt
+					bundleTotal = nil
 				} else if offer.EndsAt.Before(q.ExpiresAt) {
 					q.ExpiresAt = offer.EndsAt
 				}
@@ -184,10 +207,14 @@ func (s *OrderService) price(ctx context.Context, db *gorm.DB, in CreateOrderInp
 			}
 		}
 		line := roundMoney(unit * float64(it.Qty))
+		if bundleTotal != nil {
+			line = *bundleTotal
+		}
 		q.Subtotal += line
 		q.Items = append(q.Items, PricedItem{it.ProductID, it.VariantID, p.Title, p.SKU, it.Qty, roundMoney(unit), line})
 	}
 	q.Subtotal = roundMoney(q.Subtotal)
+	q.ShippingKnown = allFreeShipping
 	if in.CityID > 0 {
 		var city struct {
 			ShippingFee      float64
@@ -196,7 +223,9 @@ func (s *OrderService) price(ctx context.Context, db *gorm.DB, in CreateOrderInp
 		if err := db.Table("cities").Where("id=? AND is_active=TRUE", in.CityID).Take(&city).Error; err != nil {
 			return q, fmt.Errorf("اختر مدينة ضمن مناطق التوصيل")
 		}
-		q.Shipping = city.ShippingFee
+		if !allFreeShipping {
+			q.Shipping = city.ShippingFee
+		}
 		q.ShippingKnown = true
 		if city.DeliveryEstimate != nil {
 			q.DeliveryEstimate = *city.DeliveryEstimate

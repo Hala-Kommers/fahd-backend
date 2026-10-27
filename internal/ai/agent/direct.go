@@ -42,25 +42,41 @@ func (s *Service) directResponse(ctx context.Context, r MessageRequest, id int64
 		return MessageResponse{}, false
 	}
 	var p struct {
-		Title       string
-		Price       float64
-		StockTotal  int
-		HasVariants bool
+		Title                    string
+		Price                    float64
+		StockTotal               int
+		HasVariants              bool
+		FreeShipping, BundleOnly bool
 	}
 	if e := s.db.WithContext(ctx).Table("products").Where("id=? AND status='active'", productID).Take(&p).Error; e != nil {
 		return MessageResponse{}, false
 	}
 	reply := "هذه العروض المتاحة للمنتج. اختر الأنسب لك، والشحن يظهر حسب مدينتك قبل إرسال الطلب."
+	shippingNote := "الشحن حسب المدينة ويظهر قبل إرسال الطلب."
+	if p.FreeShipping {
+		shippingNote = "الشحن مجاني لهذا المنتج."
+		reply = "هذه العروض المتاحة للمنتج مع شحن مجاني. اختر الباقة الأنسب لك."
+	}
 	actions := []any{AgentAction{Type: kind}}
 	if kind == "checkout" {
 		reply = "راجع العرض وبيانات التوصيل في نموذج الطلب. الدفع عند الاستلام."
 	}
 	if kind == "price" {
-		q, e := services.NewOrderService(s.db).CalculateTotal(ctx, services.CreateOrderInput{SessionID: r.SessionID, Items: []services.OrderItemInput{{ProductID: productID, Qty: 1}}})
+		qty := 1
+		if p.BundleOnly {
+			if err := s.db.WithContext(ctx).Table("pricing_tiers").Select("qty").Where("product_id=? AND bundle_price IS NOT NULL", productID).Order("qty ASC").Limit(1).Scan(&qty).Error; err != nil {
+				return MessageResponse{}, false
+			}
+		}
+		q, e := services.NewOrderService(s.db).CalculateTotal(ctx, services.CreateOrderInput{SessionID: r.SessionID, Items: []services.OrderItemInput{{ProductID: productID, Qty: qty}}})
 		if e != nil {
 			reply = e.Error()
 		} else {
-			reply = fmt.Sprintf("سعر قطعة من %s: %.2f ر.س. الشحن حسب المدينة ويظهر قبل إرسال الطلب.", p.Title, q["grandTotal"])
+			if p.BundleOnly {
+				reply = fmt.Sprintf("باقات %s تبدأ من %d قطع بإجمالي %.2f ر.س. %s", p.Title, qty, q["grandTotal"], shippingNote)
+			} else {
+				reply = fmt.Sprintf("سعر قطعة من %s: %.2f ر.س. %s", p.Title, q["grandTotal"], shippingNote)
+			}
 		}
 		actions = []any{AgentAction{Type: "show_offers"}}
 	}
