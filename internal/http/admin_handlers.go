@@ -76,21 +76,25 @@ type adminVariantReq struct {
 
 func (h *Handler) AdminListProducts(c *gin.Context) {
 	type adminProductListItem struct {
-		ID           int64   `json:"id"`
-		Title        string  `json:"title"`
-		IsActive     bool    `json:"isActive"`
-		CategoryName *string `json:"categoryName"`
-		SKU          string  `json:"sku"`
-		Price        float64 `json:"price"`
-		StockTotal   int     `json:"stockTotal"`
-		PrimaryImage *string `json:"primaryImage"`
+		ID            int64    `json:"id"`
+		Title         string   `json:"title"`
+		IsActive      bool     `json:"isActive"`
+		CategoryName  *string  `json:"categoryName"`
+		SKU           string   `json:"sku"`
+		Price         float64  `json:"price"`
+		BundleOnly    bool     `json:"bundleOnly"`
+		StartingPrice *float64 `json:"startingPrice,omitempty"`
+		StartingQty   *int     `json:"startingQty,omitempty"`
+		StockTotal    int      `json:"stockTotal"`
+		PrimaryImage  *string  `json:"primaryImage"`
 	}
 
 	var rows []adminProductListItem
 	q := h.db.Table("products p").
-		Select("p.id, p.title, (p.status = 'active') as is_active, c.name as category_name, p.sku, p.price, p.stock_total, img.url as primary_image").
+		Select("p.id, p.title, (p.status = 'active') as is_active, c.name as category_name, p.sku, p.price, p.bundle_only, offer.starting_price, offer.starting_qty, p.stock_total, img.url as primary_image").
 		Joins("LEFT JOIN categories c ON c.id = p.category_id").
 		Joins("LEFT JOIN LATERAL (SELECT url FROM product_images i WHERE i.product_id = p.id ORDER BY i.is_primary DESC, i.sort_order ASC, i.id ASC LIMIT 1) img ON TRUE").
+		Joins("LEFT JOIN LATERAL (SELECT qty AS starting_qty, COALESCE(bundle_price, final_price * qty) AS starting_price FROM pricing_tiers t WHERE t.product_id = p.id ORDER BY qty ASC LIMIT 1) offer ON TRUE").
 		Order("p.updated_at DESC")
 
 	page := 1
