@@ -77,6 +77,7 @@ func NewRouter(cfg config.Config, db *gorm.DB, wsHandler http.Handler) *gin.Engi
 	admin.GET("/marketing/pixel", handler.GetMarketingSettings)
 	admin.PUT("/marketing/pixel", handler.SaveMarketingSettings)
 	admin.GET("/bot/config", handler.AdminGetBotConfig)
+	admin.GET("/bot/models", handler.AdminGoogleModels)
 	admin.PATCH("/bot/config", handler.AdminPatchBotConfig)
 	admin.POST("/bot/test-connection", handler.AdminTestBotConnection)
 	admin.GET("/ai/stats", handler.AdminAIStats)

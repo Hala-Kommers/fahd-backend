@@ -2,9 +2,7 @@ package http
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"fahd-backend/internal/ai/providers"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -1090,6 +1088,11 @@ func (h *Handler) AdminPatchBotConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bot config payload"})
 		return
 	}
+	if err := normalizeBotConnectionPayload(payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	payload["updated_at"] = time.Now()
 
 	apiKeyValue, hasCamel := payload["apiKey"]
 	_, hasSnake := payload["api_key"]
@@ -1148,7 +1151,7 @@ func (h *Handler) AdminPatchBotConfig(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create bot config"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"data": payload})
+		c.JSON(http.StatusOK, gin.H{"data": normalizeBotConfigRow(payload)})
 		return
 	}
 	if err != nil {
@@ -1160,37 +1163,6 @@ func (h *Handler) AdminPatchBotConfig(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": existing["id"]}})
-}
-
-func (h *Handler) AdminTestBotConnection(c *gin.Context) {
-	cfg, e := ai.LoadBotConfig(h.db, h.cfg.JWTSecret)
-	if e != nil {
-		c.JSON(400, gin.H{"error": "تعذر قراءة المفتاح المحفوظ. أعد حفظه ثم اختبر الاتصال."})
-		return
-	}
-	if strings.TrimSpace(cfg.APIKey) == "" {
-		c.JSON(400, gin.H{"error": "لم يتم حفظ مفتاح Google AI Studio. أدخله واضغط حفظ واختبار الاتصال."})
-		return
-	}
-	p, e := providers.NewProvider(cfg)
-	if e != nil {
-		c.JSON(400, gin.H{"error": "راجع المزوّد والمفتاح", "details": e.Error()})
-		return
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
-	defer cancel()
-	start := time.Now()
-	response, e := p.Generate(ctx, ai.GenerateRequest{Messages: []ai.Message{{Role: ai.RoleUser, Content: "Reply OK"}}, MaxTokens: 32})
-	if e != nil || strings.TrimSpace(response.Content) == "" {
-		details := "لم يرجع المزوّد ردًا"
-		if e != nil {
-			details = e.Error()
-		}
-		details = strings.ReplaceAll(details, cfg.APIKey, "[redacted]")
-		c.JSON(502, gin.H{"error": "فشل اتصال Google: " + details})
-		return
-	}
-	c.JSON(200, gin.H{"data": gin.H{"ok": true, "provider": p.Name(), "latencyMs": time.Since(start).Milliseconds()}})
 }
 
 func (h *Handler) AdminAnalyticsOverview(c *gin.Context) {

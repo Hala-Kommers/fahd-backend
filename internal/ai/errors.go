@@ -8,6 +8,7 @@ const (
 	ErrorCodeProviderAuth  ErrorCode = "provider_auth"
 	ErrorCodeProviderQuota ErrorCode = "provider_quota"
 	ErrorCodeProviderRate  ErrorCode = "provider_rate_limit"
+	ErrorCodeProviderModel ErrorCode = "provider_model_unavailable"
 	ErrorCodeProviderError ErrorCode = "provider_error"
 )
 

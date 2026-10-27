@@ -7,6 +7,18 @@ import (
 	"gorm.io/gorm"
 )
 
+const DefaultGoogleModel = "gemini-3.8-flash"
+
+func NormalizeGoogleModel(model string) string {
+	model = strings.TrimSpace(model)
+	model = strings.TrimPrefix(model, "google/")
+	model = strings.TrimPrefix(model, "models/")
+	if model == "" {
+		return DefaultGoogleModel
+	}
+	return model
+}
+
 type BotConfig struct {
 	ID                 int64   `json:"id"`
 	Provider           string  `json:"provider"`
@@ -31,7 +43,10 @@ func LoadBotConfig(db *gorm.DB, jwtSecret string) (BotConfig, error) {
 	}
 
 	cfg.Provider = strings.TrimSpace(strings.ToLower(cfg.Provider))
-	cfg.Model = strings.TrimSpace(cfg.Model)
+	if cfg.Provider == "" || cfg.Provider == "gemini" {
+		cfg.Provider = "google"
+	}
+	cfg.Model = NormalizeGoogleModel(cfg.Model)
 	cfg.APIKey = strings.TrimSpace(cfg.APIKey)
 	if cfg.APIKey != "" {
 		decrypted, err := DecryptAPIKey(cfg.APIKey, jwtSecret)

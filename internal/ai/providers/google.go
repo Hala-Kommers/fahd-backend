@@ -20,20 +20,18 @@ type GoogleConfig struct {
 }
 
 type GoogleProvider struct {
-	apiKey string
-	model  string
-	client *http.Client
+	apiKey  string
+	model   string
+	client  *http.Client
+	baseURL string
 }
 
 func NewGoogleProvider(cfg GoogleConfig) *GoogleProvider {
-	model := cfg.Model
-	if model == "" {
-		model = "gemini-2.0-flash"
-	}
 	return &GoogleProvider{
-		apiKey: cfg.APIKey,
-		model:  model,
-		client: &http.Client{Timeout: 60 * time.Second},
+		apiKey:  strings.TrimSpace(cfg.APIKey),
+		model:   ai.NormalizeGoogleModel(cfg.Model),
+		client:  &http.Client{Timeout: 60 * time.Second},
+		baseURL: "https://generativelanguage.googleapis.com/v1beta",
 	}
 }
 
@@ -65,7 +63,7 @@ func (p *GoogleProvider) Generate(ctx context.Context, req ai.GenerateRequest) (
 	if req.OnText != nil {
 		method = "streamGenerateContent?alt=sse"
 	}
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:%s", p.model, method)
+	url := fmt.Sprintf("%s/models/%s:%s", p.baseURL, p.model, method)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return ai.GenerateResponse{}, fmt.Errorf("create google request: %w", err)
@@ -106,6 +104,9 @@ func googleProviderError(statusCode int, body []byte) error {
 			Message string `json:"message"`
 			Status  string `json:"status"`
 			Code    int    `json:"code"`
+			Details []struct {
+				Reason string `json:"reason"`
+			} `json:"details"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Error.Message != "" {
@@ -118,11 +119,23 @@ func googleProviderError(statusCode int, body []byte) error {
 		code = ai.ErrorCodeProviderAuth
 	case http.StatusTooManyRequests:
 		code = ai.ErrorCodeProviderRate
+	case http.StatusPaymentRequired:
+		code = ai.ErrorCodeProviderQuota
+	case http.StatusNotFound:
+		code = ai.ErrorCodeProviderModel
 	}
 
 	lower := strings.ToLower(message)
-	if strings.Contains(lower, "quota") || strings.Contains(lower, "exceeded") {
+	if statusCode == http.StatusTooManyRequests && (strings.Contains(lower, "quota") || strings.Contains(lower, "billing")) {
 		code = ai.ErrorCodeProviderQuota
+	}
+	if strings.Contains(lower, "api key not valid") || strings.Contains(lower, "api key is invalid") || strings.Contains(lower, "reported as leaked") {
+		code = ai.ErrorCodeProviderAuth
+	}
+	for _, detail := range parsed.Error.Details {
+		if strings.HasPrefix(detail.Reason, "API_KEY_") || detail.Reason == "CREDENTIALS_MISSING" {
+			code = ai.ErrorCodeProviderAuth
+		}
 	}
 
 	return ai.ProviderError{

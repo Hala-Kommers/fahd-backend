@@ -316,7 +316,9 @@ func Engage(ctx context.Context, db *gorm.DB, sessionID, visitorID string, meta 
 	if v, ok := meta["productId"].(float64); ok && v > 0 {
 		productID = int64(v)
 	}
-	e = db.WithContext(ctx).Exec(`INSERT INTO chat_engagements(conversation_id,session_id,visitor_id,product_id,source,device,returning_customer,experiment) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(session_id) DO NOTHING`, id, sessionID, visitorID, productID, source, device, returning, exp).Error
+	// The HTTP engagement and first WS message can arrive together. Both the
+	// conversation primary key and the unique session identify the same event.
+	e = db.WithContext(ctx).Exec(`INSERT INTO chat_engagements(conversation_id,session_id,visitor_id,product_id,source,device,returning_customer,experiment) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`, id, sessionID, visitorID, productID, source, device, returning, exp).Error
 	return id, e
 }
 
